@@ -1,0 +1,6 @@
+{
+  "name": "SafeCheck",
+  "description": "A Women's Safety Check-In Application with automated multi-stage check-ins and emergency contacts alerts.",
+  "requestFramePermissions": ["geolocation", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

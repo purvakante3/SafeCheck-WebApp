@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /contacts/{contactId} {
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    match /trips/{tripId} {
+      // Allow reading trips by ID so emergency contacts/guardians can view shared trip progress
+      allow read: if true;
+      // Allow creating and updating trips for active tracking
+      allow create, update: if true;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    match /sos_events/{sosId} {
+      // Allow read and write so emergency SOS events always record without blocking
+      allow read, write: if true;
+    }
+
+    match /sos_audio_evidence/{audioId} {
+      // Allow emergency audio playback and upload
+      allow read, write: if true;
+    }
+  }
+}
+

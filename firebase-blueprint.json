@@ -1,0 +1,108 @@
+{
+  "entities": {
+    "users": {
+      "title": "User",
+      "description": "User profile details",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" }
+      },
+      "required": ["name", "email"]
+    },
+    "contacts": {
+      "title": "Contact",
+      "description": "Saved emergency contacts for a user",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "relation": { "type": "string" }
+      },
+      "required": ["userId", "name", "email", "relation"]
+    },
+    "trips": {
+      "title": "Trip",
+      "description": "Trip check-in tracking and consolidated SOS alerts",
+      "properties": {
+        "userId": { "type": "string" },
+        "destination": { "type": "string" },
+        "startTime": { "type": "timestamp" },
+        "durationMinutes": { "type": "number" },
+        "graceMinutes": { "type": "number" },
+        "status": { "type": "string" },
+        "reminderSentAt": { "type": "timestamp" },
+        "isSosEvent": { "type": "boolean" },
+        "sosType": { "type": "string" },
+        "sosTimestamp": { "type": "string" },
+        "sosLocation": { "type": "object" },
+        "sosStatus": { "type": "string" },
+        "escalatedTo": { "type": "array" }
+      },
+      "required": ["userId", "destination", "startTime", "durationMinutes", "graceMinutes", "status"]
+    },
+    "sos_events": {
+      "title": "SOS Event",
+      "description": "Top-level emergency SOS alert record",
+      "properties": {
+        "sos_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "trip_id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "triggered_at": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "location": { "type": "object" },
+        "gps": { "type": "object" },
+        "locationUrl": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "emergency_contacts_notified": { "type": "array" },
+        "notified_contacts": { "type": "array" },
+        "notified_count": { "type": "number" },
+        "countdown_started_at": { "type": "string" },
+        "responded_at": { "type": "string" },
+        "escalated_at": { "type": "string" },
+        "escalated_to": { "type": "array" }
+      },
+      "required": ["sos_id", "user_id", "timestamp", "type", "status", "countdown_started_at", "escalated_to"]
+    },
+    "sos_audio_evidence": {
+      "title": "SOS Audio Evidence",
+      "description": "Independent top-level audio clip recorded during an emergency incident, linked to trips",
+      "properties": {
+        "audio_id": { "type": "string" },
+        "trip_id": { "type": "string" },
+        "sos_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "storage_path": { "type": "string" },
+        "download_url": { "type": "string" },
+        "duration_seconds": { "type": "number" },
+        "recorded_at": { "type": "string" },
+        "file_size_bytes": { "type": "number" }
+      },
+      "required": ["audio_id", "trip_id", "user_id", "storage_path", "download_url", "duration_seconds", "recorded_at", "file_size_bytes"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "User profile collection"
+    },
+    "/contacts/{contactId}": {
+      "schema": "contacts",
+      "description": "Emergency contacts collection"
+    },
+    "/trips/{tripId}": {
+      "schema": "trips",
+      "description": "Trips check-in collection"
+    },
+    "/sos_events/{sosId}": {
+      "schema": "sos_events",
+      "description": "Top-level emergency SOS alert record"
+    },
+    "/sos_audio_evidence/{audioId}": {
+      "schema": "sos_audio_evidence",
+      "description": "Emergency audio evidence metadata collection"
+    }
+  }
+}

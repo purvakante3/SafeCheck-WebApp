@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SafeCheck - System Architecture & Documentation Diagrams</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --color-bg: #f8fafc;
+      --color-surface: #ffffff;
+      --color-text-main: #0f172a;
+      --color-text-muted: #475569;
+      --color-border: #cbd5e1;
+      --color-primary: #0284c7;
+      --color-primary-dark: #0369a1;
+      --color-success: #16a34a;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--color-bg);
+      color: var(--color-text-main);
+      line-height: 1.45;
+      padding: 24px 16px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* Top Action Bar (Screen Only) */
+    .action-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #ffffff;
+      padding: 16px 20px;
+      border-radius: 12px;
+      border: 1px solid var(--color-border);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+      margin-bottom: 24px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .action-info h1 {
+      font-size: 19px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .action-info p {
+      font-size: 13px;
+      color: var(--color-text-muted);
+      margin-top: 2px;
+    }
+
+    .action-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 20px;
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #e2e8f0;
+      transition: all 0.2s ease;
+    }
+
+    .status-pill.ready {
+      background: #f0fdf4;
+      color: var(--color-success);
+      border-color: #bbf7d0;
+    }
+
+    .status-pill.rendering {
+      background: #eff6ff;
+      color: #0284c7;
+      border-color: #bfdbfe;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .status-pill.rendering .status-dot {
+      animation: pulse 1.2s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    .print-btn {
+      background-color: var(--color-primary);
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 18px;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s ease;
+    }
+
+    .print-btn:hover {
+      background-color: var(--color-primary-dark);
+    }
+
+    .print-btn:active {
+      transform: scale(0.98);
+    }
+
+    .secondary-btn {
+      background-color: #f1f5f9;
+      color: #334155;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 9px 15px;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      transition: all 0.15s ease;
+    }
+
+    .secondary-btn:hover {
+      background-color: #e2e8f0;
+      color: #0f172a;
+    }
+
+    /* Diagram Section Cards */
+    .diagram-section {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .section-header {
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 10px;
+      margin-bottom: 16px;
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-desc {
+      font-size: 13px;
+      color: var(--color-text-muted);
+      margin-top: 3px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #e0f2fe;
+      color: #0369a1;
+      border-radius: 6px;
+    }
+
+    /* Diagram Rendering Container */
+    .diagram-content {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: visible;
+      padding: 4px 0;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .mermaid {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .mermaid svg {
+      max-width: 100% !important;
+      height: auto !important;
+      display: block;
+      margin: 0 auto;
+    }
+
+    /* Event Table Strict Layout */
+    .table-wrapper {
+      width: 100%;
+      overflow: visible;
+    }
+
+    table.event-table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: collapse;
+      font-size: 12px;
+      text-align: left;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    table.event-table th {
+      background-color: #f1f5f9;
+      color: #0f172a;
+      font-weight: 700;
+      padding: 9px 10px;
+      border: 1px solid #cbd5e1;
+      font-size: 12px;
+      vertical-align: middle;
+    }
+
+    table.event-table td {
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      vertical-align: top;
+      color: #334155;
+      line-height: 1.35;
+      word-break: break-word;
+      overflow-wrap: break-word;
+    }
+
+    table.event-table tr:nth-child(even) td {
+      background-color: #fafbfd;
+    }
+
+    /* Explicit Proportional Columns for Table */
+    table.event-table th.col-event,
+    table.event-table td.col-event {
+      width: 18%;
+    }
+
+    table.event-table th.col-trigger,
+    table.event-table td.col-trigger {
+      width: 25%;
+    }
+
+    table.event-table th.col-actor,
+    table.event-table td.col-actor {
+      width: 13%;
+    }
+
+    table.event-table th.col-response,
+    table.event-table td.col-response {
+      width: 44%;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      background-color: #f1f5f9;
+      color: #0f172a;
+      padding: 1px 4px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      word-break: break-all;
+    }
+
+    /* Print & PDF Export Rules */
+    @media print {
+      @page {
+        size: A4 portrait;
+        margin: 10mm 8mm 10mm 8mm;
+      }
+
+      body {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        font-size: 10pt;
+      }
+
+      .container {
+        max-width: 100% !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      .action-bar {
+        display: none !important;
+      }
+
+      /* Each diagram starts cleanly on its own page */
+      .diagram-section {
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 0 16px 0 !important;
+        background: #ffffff !important;
+        page-break-before: always !important;
+        break-before: page !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      .diagram-section:first-of-type {
+        page-break-before: auto !important;
+        break-before: auto !important;
+      }
+
+      .section-header {
+        border-bottom: 1.5px solid #64748b !important;
+        padding-bottom: 4px !important;
+        margin-bottom: 10px !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      .section-title {
+        font-size: 13.5pt !important;
+        color: #0f172a !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
+
+      .section-desc {
+        font-size: 8.5pt !important;
+        color: #475569 !important;
+        margin-top: 1px !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
+
+      .badge {
+        background: #0284c7 !important;
+        color: #ffffff !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      /* Diagram Sizing in Print to fit exactly 1 page per section */
+      .diagram-content {
+        display: block !important;
+        width: 100% !important;
+        text-align: center !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      .mermaid {
+        display: block !important;
+        width: 100% !important;
+        text-align: center !important;
+      }
+
+      .mermaid svg {
+        max-width: 100% !important;
+        max-height: 820px !important;
+        width: auto !important;
+        height: auto !important;
+        display: inline-block !important;
+        margin: 0 auto !important;
+      }
+
+      /* Event Table in Print Mode */
+      table.event-table {
+        font-size: 7.8pt !important;
+        width: 100% !important;
+        table-layout: fixed !important;
+      }
+
+      table.event-table th {
+        background-color: #f1f5f9 !important;
+        color: #0f172a !important;
+        padding: 5px 6px !important;
+        font-size: 8pt !important;
+        border: 1px solid #94a3b8 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      table.event-table td {
+        padding: 4px 6px !important;
+        font-size: 7.8pt !important;
+        line-height: 1.25 !important;
+        border: 1px solid #94a3b8 !important;
+        word-break: break-word !important;
+        overflow-wrap: break-word !important;
+      }
+
+      table.event-table tr:nth-child(even) td {
+        background-color: #f8fafc !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      code {
+        font-size: 7pt !important;
+        padding: 1px 2px !important;
+        word-break: break-all !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Screen Header & Actions -->
+    <div class="action-bar">
+      <div class="action-info">
+        <h1>SafeCheck Architecture & System Documentation</h1>
+        <p>Official 8-part architectural blueprint and runtime specification</p>
+      </div>
+      <div class="action-controls">
+        <div id="status-pill" class="status-pill rendering">
+          <span class="status-dot"></span>
+          <span id="status-text">Rendering 7 visual diagrams...</span>
+        </div>
+        <a id="new-tab-btn" href="/diagrams.html" target="_blank" rel="noopener noreferrer" class="secondary-btn" title="Open full standalone page in new tab">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+          Open in New Tab
+        </a>
+        <button id="print-btn" class="print-btn" type="button" onclick="handlePrint()" title="Print or Save as PDF (Ctrl+P / Cmd+P)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 6 2 18 2 18 9"></polyline>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+            <rect x="6" y="14" width="12" height="8"></rect>
+          </svg>
+          Print / Save as PDF
+        </button>
+      </div>
+    </div>
+
+    <!-- 1. EVENT TABLE -->
+    <section class="diagram-section" id="section-1">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">1</span> Event Table
+        </h2>
+        <p class="section-desc">Key application events, trigger conditions, triggering actors, and automated system responses.</p>
+      </div>
+      <div class="table-wrapper">
+        <table class="event-table">
+          <thead>
+            <tr>
+              <th class="col-event">Event Name</th>
+              <th class="col-trigger">Trigger / Condition</th>
+              <th class="col-actor">Actor</th>
+              <th class="col-response">System Response</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="col-event"><code>UserSignedUp</code> / <code>UserLoggedIn</code></td>
+              <td class="col-trigger">User submits email/password or Google OAuth in <code>Auth.tsx</code></td>
+              <td class="col-actor">User</td>
+              <td class="col-response"><code>authService.ts</code> authenticates with Firebase Auth, provisions or retrieves <code>users/{userId}</code> document in Firestore, loads user profile & contacts into state.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>TripStarted</code></td>
+              <td class="col-trigger">User fills destination, transport mode, check-in interval, and clicks "Start Safe Trip" in <code>StartTrip.tsx</code></td>
+              <td class="col-actor">User</td>
+              <td class="col-response"><code>tripService.startTrip()</code> creates a document in <code>trips/{tripId}</code> with <code>status: 'active'</code>, captures initial GPS coords, creates guardian tracking link, and initializes periodic check-in timer.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>TripLocationUpdated</code></td>
+              <td class="col-trigger">Geolocation watcher fires with updated latitude/longitude</td>
+              <td class="col-actor">Device GPS / User</td>
+              <td class="col-response"><code>tripService.updateTripLocation()</code> updates <code>currentLocation</code> and appends coordinate to <code>routeHistory</code> in Firestore <code>trips/{tripId}</code>.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>CheckInPromptDue</code></td>
+              <td class="col-trigger">Elapsed time since last check-in reaches <code>checkInIntervalMinutes</code></td>
+              <td class="col-actor">System Timer (<code>ActiveTrip.tsx</code>)</td>
+              <td class="col-response">System plays alert chime, activates high-visibility check-in banner, and begins countdown to unacknowledged timeout.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>CheckInAcknowledged</code></td>
+              <td class="col-trigger">User presses "I'm Safe / Check In" button in <code>ActiveTrip.tsx</code></td>
+              <td class="col-actor">User</td>
+              <td class="col-response"><code>tripService.acknowledgeCheckIn()</code> updates <code>lastCheckIn</code> timestamp in Firestore and resets the check-in interval timer.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>CheckInMissed</code></td>
+              <td class="col-trigger">User fails to acknowledge check-in before <code>unacknowledgedTimeoutMinutes</code> expires</td>
+              <td class="col-actor">System Timer (<code>ActiveTrip.tsx</code>)</td>
+              <td class="col-response">Automatically triggers <code>triggerSOSAlert()</code> with trigger type <code>"timeout"</code> and dispatches emergency alerts to all registered contacts.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>SOSTriggered</code></td>
+              <td class="col-trigger">User presses red SOS button, uses 4-click hardware key shortcut, or trigger modal completes</td>
+              <td class="col-actor">User</td>
+              <td class="col-response"><code>tripService.triggerSOSAlert()</code> updates <code>isSOS: true</code> on trip, updates user status, logs SOS event with high-accuracy GPS, captures 10s audio evidence, and sends notifications.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>WakePhraseDetected</code></td>
+              <td class="col-trigger">Continuous Web Speech API matches configured wake phrase (e.g. <em>"help me"</em>, <em>"मदद करो"</em>, <em>"वाचवा"</em>)</td>
+              <td class="col-actor">Web Speech API / Voice</td>
+              <td class="col-response"><code>voiceSosService.ts</code> fires callback, plays voice recognition confirmation chime, and triggers immediate emergency SOS alert.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>FallDetected</code></td>
+              <td class="col-trigger">Accelerometer detects sudden high-g spike (>32 m/s²) followed by stillness</td>
+              <td class="col-actor">Accelerometer / <code>devicemotion</code></td>
+              <td class="col-response"><code>fallDetectionService.ts</code> triggers <code>FallDetectionModal</code>, plays emergency pulse beep, starts 15s cancel countdown, and fires SOS if not disarmed.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>FakeCallInitiated</code></td>
+              <td class="col-trigger">User clicks floating call button or triggers via triple-tap / settings</td>
+              <td class="col-actor">User</td>
+              <td class="col-response"><code>FakeCallModal.tsx</code> renders full-screen incoming call UI, loops synthesized ringtone via Web Audio API, and transitions to connected timer on answer.</td>
+            </tr>
+            <tr>
+              <td class="col-event"><code>TripEnded</code></td>
+              <td class="col-trigger">User clicks "End Trip / Arrived Safely" in <code>ActiveTrip.tsx</code></td>
+              <td class="col-actor">User</td>
+              <td class="col-response"><code>tripService.endTrip()</code> marks trip <code>status: 'completed'</code>, <code>isSOS: false</code>, sets <code>endTime</code>, cleans up GPS watchers and background audio recorders.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 2. CLASS DIAGRAM -->
+    <section class="diagram-section" id="section-2">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">2</span> Class Diagram
+        </h2>
+        <p class="section-desc">TypeScript models, service contracts, data interfaces, and architectural relationships.</p>
+      </div>
+      <div class="diagram-content">
+        <pre class="mermaid">
+classDiagram
+    direction TB
+
+    class UserProfile {
+        +string uid
+        +string email
+        +string name
+        +string phone
+        +string photoURL
+        +string bloodGroup
+        +string emergencyNotes
+        +string quickDialNumber
+        +string fcmToken
+        +number createdAt
+        +number updatedAt
+    }
+
+    class EmergencyContact {
+        +string id
+        +string userId
+        +string name
+        +string phone
+        +string email
+        +string relation
+        +number priority
+        +boolean notifyOnSOS
+        +number createdAt
+    }
+
+    class LocationCoords {
+        +number latitude
+        +number longitude
+        +number accuracy
+        +number altitude
+        +number speed
+        +number heading
+        +number timestamp
+        +string address
+    }
+
+    class AudioEvidence {
+        +string id
+        +string tripId
+        +string userId
+        +number timestamp
+        +number durationSeconds
+        +string audioBase64
+        +string mimeType
+        +LocationCoords location
+    }
+
+    class Trip {
+        +string id
+        +string userId
+        +string userName
+        +string destination
+        +string transportMode
+        +string status
+        +boolean isSOS
+        +string sosTriggerType
+        +number startTime
+        +number endTime
+        +number expectedDurationMinutes
+        +number checkInIntervalMinutes
+        +number lastCheckIn
+        +LocationCoords startLocation
+        +LocationCoords currentLocation
+        +LocationCoords[] routeHistory
+        +AudioEvidence[] audioRecordings
+    }
+
+    class AppSettings {
+        +string fakeCallerName
+        +string fakeCallerSubtitle
+        +boolean ringtoneEnabled
+        +boolean floatingFakeCallButton
+        +boolean tripCheckInRemindersEnabled
+        +number checkInReminderIntervalMinutes
+        +boolean autoAlertIfNotAcknowledged
+        +boolean hardwareSosTriggerEnabled
+        +boolean voiceSosEnabled
+        +string voiceWakePhrase
+        +boolean fallDetectionEnabled
+        +number fallCountdownSeconds
+        +boolean audioSnapshottingEnabled
+    }
+
+    class AuthService {
+        +subscribeAuth(callback) Unsubscribe
+        +registerUser(email, password, name) Promise~UserProfile~
+        +loginUser(email, password) Promise~UserProfile~
+        +logoutUser() Promise~void~
+        +getUserProfile(uid) Promise~UserProfile~
+        +updateUserProfileData(uid, data) Promise~void~
+    }
+
+    class TripService {
+        +startTrip(userId, data) Promise~Trip~
+        +getActiveTrip(userId) Promise~Trip~
+        +updateTripLocation(tripId, coords) Promise~void~
+        +acknowledgeCheckIn(tripId) Promise~void~
+        +triggerSOSAlert(tripId, coords, triggerType) Promise~void~
+        +endTrip(tripId) Promise~void~
+        +subscribeActiveTrip(userId, callback) Unsubscribe
+        +subscribeUserTrips(userId, callback) Unsubscribe
+    }
+
+    class ContactService {
+        +getContacts(userId) Promise~EmergencyContact[]~
+        +addContact(userId, contact) Promise~string~
+        +updateContact(userId, contactId, data) Promise~void~
+        +deleteContact(userId, contactId) Promise~void~
+        +subscribeContacts(userId, callback) Unsubscribe
+    }
+
+    class VoiceSosService {
+        +startVoiceSosListener(options) Function
+        +stopVoiceSosListener() void
+        +isVoiceSosSupported() boolean
+    }
+
+    class FallDetectionService {
+        +startFallDetection(options) Function
+        +stopFallDetection() void
+        +requestMotionPermission() Promise~boolean~
+    }
+
+    class AudioEvidenceService {
+        +startEvidenceRecording(options) Promise~Function~
+        +capture10SecondSnapshot(tripId, userId, coords) Promise~AudioEvidence~
+        +saveEvidenceToTrip(tripId, evidence) Promise~void~
+    }
+
+    UserProfile "1" o-- "0..*" EmergencyContact : has
+    UserProfile "1" o-- "0..*" Trip : creates
+    Trip "1" *-- "1..2" LocationCoords : current & start
+    Trip "1" *-- "0..*" LocationCoords : routeHistory
+    Trip "1" *-- "0..*" AudioEvidence : evidenceLogs
+    
+    AuthService ..> UserProfile : manages
+    ContactService ..> EmergencyContact : persists
+    TripService ..> Trip : persists
+    AudioEvidenceService ..> AudioEvidence : records
+    VoiceSosService ..> TripService : triggers SOS
+    FallDetectionService ..> TripService : triggers SOS
+        </pre>
+      </div>
+    </section>
+
+    <!-- 3. OBJECT DIAGRAM -->
+    <section class="diagram-section" id="section-3">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">3</span> Object Diagram
+        </h2>
+        <p class="section-desc">A concrete runtime instance snapshot during an active emergency SOS.</p>
+      </div>
+      <div class="diagram-content">
+        <pre class="mermaid">
+classDiagram
+    direction TB
+    
+    class user101_Profile {
+        +string uid : "usr_89f41b9e"
+        +string name : "Priya Sharma"
+        +string email : "priya.sharma@example.com"
+        +string phone : "+91 98765 43210"
+        +string bloodGroup : "O+"
+        +string emergencyNotes : "Asthmatic; carries inhaler"
+        +string quickDialNumber : "1091"
+    }
+
+    class contact1_Parent {
+        +string id : "cnt_mom_01"
+        +string userId : "usr_89f41b9e"
+        +string name : "Sunita Sharma (Mother)"
+        +string phone : "+91 98200 12345"
+        +string email : "sunita.s@example.com"
+        +number priority : 1
+        +boolean notifyOnSOS : true
+    }
+
+    class trip_CurrentActive {
+        +string id : "trp_667ab902"
+        +string destination : "Andheri Station West"
+        +string transportMode : "Cab / Taxi"
+        +string status : "active"
+        +boolean isSOS : true
+        +string sosTriggerType : "voice_wake_phrase"
+        +number checkInIntervalMinutes : 15
+    }
+
+    class loc_CurrentCoords {
+        +number latitude : 19.1197
+        +number longitude : 72.8464
+        +number accuracy : 8.5
+        +string address : "SV Road near Khar Subway"
+    }
+
+    class audio_EvidenceSnapshot {
+        +string id : "aud_99a8b11c"
+        +number durationSeconds : 10
+        +string mimeType : "audio/webm"
+        +string status : "saved_to_trip"
+    }
+
+    user101_Profile --> contact1_Parent : registeredContact
+    user101_Profile --> trip_CurrentActive : currentTrip
+    trip_CurrentActive --> loc_CurrentCoords : currentLocation
+    trip_CurrentActive --> audio_EvidenceSnapshot : audioRecordings
+        </pre>
+      </div>
+    </section>
+
+    <!-- 4. USE CASE DIAGRAM -->
+    <section class="diagram-section" id="section-4">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">4</span> Use Case Diagram
+        </h2>
+        <p class="section-desc">Actors, primary functional scopes, emergency defense layers, and guardian view interactions.</p>
+      </div>
+      <div class="diagram-content">
+        <pre class="mermaid">
+flowchart TB
+    subgraph Actors_Block ["Actors"]
+        User((Primary User<br/>Commuter / Solo Traveler))
+        Guardian((Emergency Contact /<br/>Guardian))
+        Sensors((Device Hardware<br/>Sensors & APIs))
+    end
+
+    subgraph Core_Features ["App Features & Protection Domains"]
+        subgraph Auth_Profile ["Authentication & Profile"]
+            UC1[Register & Sign In]
+            UC2[Manage Emergency Contacts]
+            UC3[Configure Safety & Sensor Settings]
+            UC4[View / Scan Emergency QR Badge]
+        end
+
+        subgraph Trip_Flow ["Trip Lifecycle"]
+            UC5[Start Safe Journey]
+            UC6[Live GPS Route Tracking]
+            UC7[Respond to Periodic Check-Ins]
+            UC8[End Trip Safely]
+        end
+
+        subgraph SOS_Layer ["Emergency & SOS Protections"]
+            UC9[Trigger Manual Panic SOS]
+            UC10[Voice-Activated Wake Word SOS]
+            UC11[Automated Fall / Crash Detection]
+            UC12[Auto-SOS on Missed Check-In Timeout]
+            UC13[Capture Audio Evidence Snapshot]
+        end
+
+        subgraph Discreet_Layer ["Discreet Defense"]
+            UC14[Trigger Fake Incoming Phone Call]
+            UC16[One-Tap Quick Helpline Dial 1091/112]
+        end
+
+        subgraph Guardian_Layer ["Guardian Public View"]
+            UC17[Open Live Guardian Web Tracker]
+            UC18[View Real-Time Breadcrumb Route]
+            UC19[Receive SOS Notifications & Email Alerts]
+            UC20[Listen to Recorded Emergency Audio]
+        end
+    end
+
+    User --> UC1
+    User --> UC2
+    User --> UC3
+    User --> UC4
+    User --> UC5
+    User --> UC6
+    User --> UC7
+    User --> UC8
+    User --> UC9
+    User --> UC14
+    User --> UC15
+    User --> UC16
+
+    Sensors --> UC10
+    Sensors --> UC11
+    Sensors --> UC6
+
+    UC9 -.-> UC13
+    UC10 -.-> UC9
+    UC11 -.-> UC9
+    UC12 -.-> UC9
+
+    Guardian --> UC17
+    Guardian --> UC18
+    Guardian --> UC19
+    Guardian --> UC20
+        </pre>
+      </div>
+    </section>
+
+    <!-- 5. SEQUENCE DIAGRAM -->
+    <section class="diagram-section" id="section-5">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">5</span> Sequence Diagram
+        </h2>
+        <p class="section-desc">Execution flow across frontend state, sensor services, and Firestore during an emergency SOS event.</p>
+      </div>
+      <div class="diagram-content">
+        <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor User as User / Sensor
+    participant UI as React UI (ActiveTrip / Dashboard)
+    participant TS as tripService.ts
+    participant LS as locationService.ts
+    participant AS as audioEvidenceService.ts
+    participant CS as contactService.ts
+    participant NS as notificationService.ts
+    participant FS as Firebase Firestore
+    actor Guardian as Emergency Contacts
+
+    User->>UI: Trigger SOS (Button / "help me" / Fall / Timeout)
+    UI->>UI: Play SOS siren / haptic feedback vibration
+    
+    par GPS Coordinates Capture
+        UI->>LS: getCurrentLocation()
+        LS-->>UI: LocationCoords { lat, lng, accuracy, speed }
+    and Audio Evidence Recording
+        UI->>AS: capture10SecondSnapshot(tripId, userId, coords)
+        activate AS
+    end
+
+    UI->>TS: triggerSOSAlert(tripId, coords, triggerType)
+    activate TS
+    
+    TS->>FS: updateDoc(trips/{tripId}, { isSOS: true, sosTriggerType, currentLocation })
+    TS->>FS: updateDoc(users/{userId}, { activeSOS: true, lastKnownLocation })
+    
+    TS->>CS: getContacts(userId)
+    activate CS
+    CS->>FS: getDocs(collection(users/{userId}/contacts))
+    FS-->>CS: EmergencyContact[]
+    CS-->>TS: EmergencyContact[]
+    deactivate CS
+
+    TS->>NS: notifySosTriggered(userProfile, activeTrip, contacts, coords)
+    activate NS
+    NS->>NS: Format Email & Guardian Tracking Link
+    NS->>FS: addDoc(system_logs, { type: 'sos_email_dispatched', timestamp, recipients })
+    NS-->>Guardian: Dispatches Alert Email with Live GPS Map URL
+    deactivate NS
+
+    AS-->>TS: AudioEvidence { id, audioBase64, durationSeconds: 10 }
+    deactivate AS
+
+    TS->>AS: saveEvidenceToTrip(tripId, AudioEvidence)
+    AS->>FS: updateDoc(trips/{tripId}, { audioRecordings: arrayUnion(evidence) })
+    
+    TS-->>UI: SOS state confirmed & persisted
+    deactivate TS
+
+    UI->>UI: Render Emergency QR modal & Quick Dial 112 / 1091 buttons
+    Guardian->>FS: Guardian opens public tracking link (?guardian=tripId)
+    FS-->>Guardian: Stream live location, SOS status, and audio recording
+        </pre>
+      </div>
+    </section>
+
+    <!-- 6. ACTIVITY DIAGRAM -->
+    <section class="diagram-section" id="section-6">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">6</span> Activity Diagram
+        </h2>
+        <p class="section-desc">Trip state lifecycle, check-in validation logic, auto-timeout protection, and safe disarming.</p>
+      </div>
+      <div class="diagram-content">
+        <pre class="mermaid">
+flowchart TD
+    Start([User Initiates Safe Trip]) --> InputForm[Enter Destination, Mode & Interval]
+    InputForm --> ClickStart[Click 'Start Safe Trip']
+    
+    ClickStart --> InitTrip[tripService.startTrip: Save Firestore & Track GPS]
+    InitTrip --> StartTimer[Initialize Check-In Countdown Timer]
+
+    StartTimer --> MonitorState{Trip In Progress}
+
+    %% Tracking Branch
+    MonitorState -->|GPS Movement| UpdateGPS[Update Live Location & Breadcrumb]
+    UpdateGPS --> MonitorState
+
+    %% Check-In Timer Branch
+    MonitorState -->|Interval Elapsed| PromptCheckIn[Display Check-In Prompt & Play Chime]
+    PromptCheckIn --> StartAckCountdown[Start Grace Period Countdown]
+    
+    StartAckCountdown --> CheckInDecision{Did User Acknowledge?}
+    CheckInDecision -->|Yes: Clicked 'I am Safe'| ResetTimer[tripService.acknowledgeCheckIn]
+    ResetTimer --> MonitorState
+
+    CheckInDecision -->|No: Timer Expired| TimeoutTrigger[Auto-Trigger SOS: Reason 'timeout']
+
+    %% Parallel Detection
+    MonitorState -->|User Presses SOS Button| ManualTrigger[Trigger Manual SOS]
+    MonitorState -->|Voice Matches Wake Phrase| VoiceTrigger[Trigger Voice SOS]
+    MonitorState -->|Impact Spike Detected| FallTrigger[Start 15s Fall Countdown]
+    
+    FallTrigger --> FallCanceled{User Disarmed?}
+    FallCanceled -->|Yes: Clicked 'I am OK'| MonitorState
+    FallCanceled -->|No: 15s Expired| ImpactSOS[Trigger Fall Impact SOS]
+
+    %% SOS Execution
+    ManualTrigger --> ExecuteSOS[Execute triggerSOSAlert]
+    VoiceTrigger --> ExecuteSOS
+    TimeoutTrigger --> ExecuteSOS
+    ImpactSOS --> ExecuteSOS
+
+    ExecuteSOS --> RecordAudio[Record 10-Second Audio Evidence]
+    ExecuteSOS --> MarkFirestore[Set trip.isSOS = true & user.activeSOS = true]
+    ExecuteSOS --> SendAlerts[Dispatch Emails with Live GPS Link to Contacts]
+    RecordAudio --> AttachEvidence[Attach Audio to Trip in Firestore]
+    AttachEvidence --> SOSActiveState[Display Emergency QR Badge & 1091 Quick Dial]
+
+    %% Completion
+    MonitorState -->|User Arrives| ClickEnd[Click 'End Trip / Arrived Safely']
+    SOSActiveState -->|Resolved / Safe| ClickEnd
+    ClickEnd --> CompleteTrip[tripService.endTrip: status = 'completed']
+    CompleteTrip --> StopSensors[Stop GPS Watcher, Voice Recognition & Audio]
+    StopSensors --> End([Trip Completed & Logged to History])
+        </pre>
+      </div>
+    </section>
+
+    <!-- 7. COMPONENT DIAGRAM -->
+    <section class="diagram-section" id="section-7">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">7</span> Component Diagram
+        </h2>
+        <p class="section-desc">Modular structural decomposition across Presentation, Service, Utility, and Firebase backend layers.</p>
+      </div>
+      <div class="diagram-content">
+        <pre class="mermaid">
+flowchart TB
+    subgraph Presentation_Layer ["Presentation Layer (React 19 + Tailwind CSS)"]
+        App["App.tsx (Router, Global State & Event Listeners)"]
+        
+        subgraph Pages ["Pages (src/pages/)"]
+            P_Home["Home.tsx"]
+            P_Auth["Auth.tsx"]
+            P_Dash["Dashboard.tsx"]
+            P_Start["StartTrip.tsx"]
+            P_Active["ActiveTrip.tsx"]
+            P_History["TripHistory.tsx"]
+            P_Contacts["Contacts.tsx"]
+            P_Profile["Profile.tsx"]
+            P_Settings["Settings.tsx"]
+            P_Guardian["GuardianView.tsx"]
+        end
+
+        subgraph Components ["Interactive Components (src/components/)"]
+            C_Nav["Navbar.tsx"]
+            C_Foot["Footer.tsx"]
+            C_FakeModal["FakeCallModal.tsx"]
+            C_FakeTrigger["FakeCallTrigger.tsx"]
+            C_VoiceListener["VoiceSosListener.tsx"]
+            C_FallListener["FallDetectionListener.tsx"]
+            C_FallModal["FallDetectionModal.tsx"]
+            C_AudioRec["AudioEvidenceRecorder.tsx"]
+            C_AudioPlay["AudioEvidencePlayer.tsx"]
+            C_QR["EmergencyQRCard.tsx"]
+            C_Score["SafetyScoreCard.tsx"]
+            C_Logs["SystemLogDrawer.tsx"]
+        end
+
+        subgraph Context_i18n ["Internationalization"]
+            I18N["LanguageContext.tsx<br/>(EN, HI, MR)"]
+        end
+    end
+
+    subgraph Service_Layer ["Service & Utility Layer (src/services/ & src/utils/)"]
+        S_Auth["authService.ts"]
+        S_Trip["tripService.ts"]
+        S_Contact["contactService.ts"]
+        S_Guardian["guardianService.ts"]
+        S_Voice["voiceSosService.ts"]
+        S_Fall["fallDetectionService.ts"]
+        S_Audio["audioEvidenceService.ts"]
+        S_Loc["locationService.ts"]
+        S_Notif["notificationService.ts"]
+        S_Settings["settingsService.ts"]
+        U_QR["qrCodeGenerator.ts"]
+        U_Sound["soundAlert.ts"]
+    end
+
+    subgraph Cloud_Infrastructure ["Firebase Cloud Services"]
+        FB_Config["firebase.ts (SDK Init)"]
+        FB_Auth[("Firebase Authentication")]
+        FB_DB[("Cloud Firestore<br/>• users/<br/>• trips/<br/>• system_logs/")]
+    end
+
+    %% Wiring
+    App --> Pages
+    App --> Components
+    Pages --> Components
+    Pages -.-> Context_i18n
+    Components -.-> Context_i18n
+
+    P_Auth --> S_Auth
+    P_Dash --> S_Trip
+    P_Start --> S_Trip
+    P_Active --> S_Trip
+    P_Active --> S_Audio
+    P_Contacts --> S_Contact
+    P_Guardian --> S_Guardian
+    P_Settings --> S_Settings
+    
+    C_VoiceListener --> S_Voice
+    C_VoiceListener --> U_Sound
+    C_FallListener --> S_Fall
+    C_FallModal --> U_Sound
+    C_AudioRec --> S_Audio
+    C_QR --> U_QR
+
+    S_Voice --> S_Trip
+    S_Fall --> S_Trip
+    S_Trip --> S_Loc
+    S_Trip --> S_Notif
+    S_Trip --> S_Audio
+
+    S_Auth --> FB_Config
+    S_Trip --> FB_Config
+    S_Contact --> FB_Config
+    S_Guardian --> FB_Config
+    S_Notif --> FB_Config
+
+    FB_Config --> FB_Auth
+    FB_Config --> FB_DB
+        </pre>
+      </div>
+    </section>
+
+    <!-- 8. DEPLOYMENT DIAGRAM -->
+    <section class="diagram-section" id="section-8">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="badge">8</span> Deployment Diagram
+        </h2>
+        <p class="section-desc">Host container environment, client PWA hardware bindings, and managed cloud communication nodes.</p>
+      </div>
+      <div class="diagram-content">
+        <pre class="mermaid">
+flowchart TB
+    subgraph Client_Device ["Client Environment (Smartphone / Desktop Web Browser)"]
+        subgraph PWA_Container ["SafeCheck Single Page Application (PWA)"]
+            SPA_Runtime["React 19 + Vite Frontend Bundle"]
+            LocalStore[("Browser LocalStorage<br/>(AppSettings & Session State)")]
+        end
+
+        subgraph Hardware_APIs ["Device Hardware & Web APIs"]
+            GPS_API["Geolocation API (GPS)"]
+            Speech_API["Web Speech API (SpeechRecognition)"]
+            Motion_API["DeviceMotionEvent (Accelerometer)"]
+            Audio_API["MediaStream / Web Audio API (Mic & Synthesizer)"]
+        end
+
+        SPA_Runtime <--> LocalStore
+        SPA_Runtime <-- "navigator.geolocation" --> GPS_API
+        SPA_Runtime <-- "webkitSpeechRecognition" --> Speech_API
+        SPA_Runtime <-- "window.addEventListener('devicemotion')" --> Motion_API
+        SPA_Runtime <-- "navigator.mediaDevices.getUserMedia" --> Audio_API
+    end
+
+    subgraph Hosting_Environment ["Application Hosting & Ingress"]
+        Nginx_Proxy["Google Cloud Run Container Ingress<br/>(Nginx Reverse Proxy :3000 / HTTPS)"]
+        Static_Server["Vite / Express Static Asset Server (dist/)"]
+        Nginx_Proxy --> Static_Server
+    end
+
+    subgraph Firebase_Cloud_Platform ["Google Cloud / Firebase Managed Backend"]
+        Cloud_Auth["Firebase Auth Service<br/>(Identity Platform / OAuth 2.0)"]
+        Cloud_Firestore["Cloud Firestore Multi-Region Database<br/>(Realtime WebSockets & Rule Enforcement)"]
+        Mail_Service["Transactional Email Relay / SMTP"]
+    end
+
+    subgraph Guardian_Device ["Emergency Contact Remote Device"]
+        Guardian_Browser["Guardian Web Browser<br/>(Live Route Breadcrumbs & Audio Player)"]
+    end
+
+    %% Connections
+    Static_Server -- "Serves JS/CSS/Assets via HTTPS" --> SPA_Runtime
+    SPA_Runtime -- "gRPC-Web / Secure WebSockets" --> Cloud_Firestore
+    SPA_Runtime -- "HTTPS Token Auth" --> Cloud_Auth
+    SPA_Runtime -- "Dispatches Alerts" --> Mail_Service
+    Mail_Service -- "Emergency Email" --> Guardian_Device
+    Guardian_Browser -- "Reads trips/{tripId} snapshot" --> Cloud_Firestore
+        </pre>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+    let isRenderComplete = false;
+
+    async function initializeAndRenderMermaid() {
+      const statusPill = document.getElementById('status-pill');
+      const statusText = document.getElementById('status-text');
+      const printBtn = document.getElementById('print-btn');
+
+      // Wait if Mermaid script is downloading from CDN
+      let retries = 0;
+      while (typeof mermaid === 'undefined' && retries < 40) {
+        await new Promise((r) => setTimeout(r, 50));
+        retries++;
+      }
+
+      if (typeof mermaid !== 'undefined') {
+        try {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: 'neutral',
+            securityLevel: 'loose',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+            flowchart: {
+              useMaxWidth: true,
+              htmlLabels: true,
+              curve: 'basis',
+              nodeSpacing: 35,
+              rankSpacing: 40
+            },
+            sequence: {
+              useMaxWidth: true,
+              mirrorActors: false,
+              bottomMarginAdj: 10
+            },
+            class: {
+              useMaxWidth: true
+            }
+          });
+
+          if (statusText) statusText.textContent = 'Rendering 7 visual diagrams...';
+
+          const nodes = Array.from(document.querySelectorAll('.mermaid'));
+          for (const node of nodes) {
+            try {
+              await mermaid.run({
+                nodes: [node],
+                suppressErrors: true
+              });
+            } catch (nodeErr) {
+              console.warn('Mermaid node render warning:', nodeErr);
+            }
+          }
+
+          // Format SVG dimensions for responsive scaling and print margins
+          const renderedSvgs = document.querySelectorAll('.mermaid svg');
+          renderedSvgs.forEach((svg) => {
+            svg.style.maxWidth = '100%';
+            svg.style.height = 'auto';
+            svg.style.display = 'block';
+            svg.style.margin = '0 auto';
+          });
+
+          isRenderComplete = true;
+
+          if (statusPill && statusText) {
+            statusPill.className = 'status-pill ready';
+            statusText.textContent = '✓ All 8 Sections Ready to Print';
+          }
+        } catch (err) {
+          console.error('Mermaid render error:', err);
+          isRenderComplete = true;
+          if (statusPill && statusText) {
+            statusPill.className = 'status-pill ready';
+            statusText.textContent = '✓ Document Ready (Print Active)';
+          }
+        }
+      } else {
+        isRenderComplete = true;
+        if (statusPill && statusText) {
+          statusPill.className = 'status-pill ready';
+          statusText.textContent = '✓ Document Ready (Print Active)';
+        }
+      }
+
+      if (printBtn) {
+        printBtn.disabled = false;
+      }
+    }
+
+    function handlePrint() {
+      try {
+        window.focus();
+        window.print();
+      } catch (err) {
+        console.error('Direct window.print() call failed:', err);
+        // Fallback for sandboxed frames without allow-modals
+        const targetUrl = window.location.href;
+        const newWin = window.open(targetUrl, '_blank');
+        if (newWin) {
+          newWin.focus();
+        }
+      }
+    }
+
+    // Attach listeners reliably
+    window.handlePrint = handlePrint;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const printBtn = document.getElementById('print-btn');
+      if (printBtn) {
+        printBtn.addEventListener('click', handlePrint);
+      }
+
+      // Keyboard shortcut Ctrl+P / Cmd+P support
+      window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+          e.preventDefault();
+          handlePrint();
+        }
+      });
+
+      // Small delay to ensure CSS styling is computed
+      setTimeout(initializeAndRenderMermaid, 50);
+    });
+  </script>
+</body>
+</html>
