@@ -29,6 +29,7 @@ import {
   Sparkles,
   WifiOff,
   MessageSquare,
+  BatteryWarning,
 } from 'lucide-react';
 import { Trip, AppSettings, UserProfile, LocationTrailPoint, EmergencyContact } from '../types';
 import {
@@ -53,6 +54,7 @@ import { AudioEvidenceRecorder } from '../components/AudioEvidenceRecorder';
 import { AudioEvidencePlayer } from '../components/AudioEvidencePlayer';
 import { EmergencyQRExchangeModal } from '../components/EmergencyQRExchangeModal';
 import { EmergencyQRCard } from '../components/EmergencyQRCard';
+import { LowBatteryMonitor } from '../components/LowBatteryMonitor';
 import { useLanguage } from '../i18n/LanguageContext';
 import { getCachedContacts, getUserContacts } from '../services/contactService';
 import {
@@ -716,6 +718,16 @@ export const ActiveTrip: React.FC<ActiveTripProps> = ({
         />
       )}
 
+      {/* Low Battery Auto-Alert Monitor (triggers at <15% battery once per trip) */}
+      <LowBatteryMonitor
+        trip={trip}
+        user={user || null}
+        contacts={emergencyContactsList}
+        onAlertSent={() => {
+          onTripUpdated();
+        }}
+      />
+
       {/* Scheduled Check-In Prompt Banner */}
       {checkInDue && (
         <div className="bg-amber-500 text-slate-950 p-5 sm:p-6 rounded-3xl shadow-xl border-2 border-amber-300 animate-pulse space-y-3">
@@ -817,17 +829,30 @@ export const ActiveTrip: React.FC<ActiveTripProps> = ({
             </span>
           </div>
 
-          <div
-            className={`px-3 py-1 rounded-full text-xs font-black flex items-center space-x-1.5 border shadow-2xs ${
-              isReminded
-                ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse'
-                : isArrivingSoon
-                ? 'bg-purple-50 text-purple-800 border-purple-200'
-                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-            }`}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            <span>{currentStatusLabel}</span>
+          <div className="flex items-center space-x-2">
+            {trip.lowBatteryAlertSent && (
+              <div
+                id="active-trip-low-battery-badge"
+                className="px-2.5 py-1 rounded-full text-xs font-bold flex items-center space-x-1 border bg-amber-50 text-amber-800 border-amber-300"
+                title="Low battery alert was automatically dispatched to emergency contacts"
+              >
+                <BatteryWarning className="w-3.5 h-3.5 text-amber-600" />
+                <span>Battery Low Alert Sent ({trip.lowBatteryLevel ?? '<15'}%)</span>
+              </div>
+            )}
+
+            <div
+              className={`px-3 py-1 rounded-full text-xs font-black flex items-center space-x-1.5 border shadow-2xs ${
+                isReminded
+                  ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse'
+                  : isArrivingSoon
+                  ? 'bg-purple-50 text-purple-800 border-purple-200'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>{currentStatusLabel}</span>
+            </div>
           </div>
         </div>
 
@@ -1051,6 +1076,21 @@ export const ActiveTrip: React.FC<ActiveTripProps> = ({
             >
               <Play className="w-3 h-3" />
               <span>{t('testReminder')}</span>
+            </button>
+
+            <button
+              id="test-low-battery-alert-btn"
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(
+                  new CustomEvent('safecheck:simulate-low-battery', { detail: { level: 0.12 } })
+                );
+              }}
+              className="font-bold text-amber-800 hover:underline flex items-center space-x-1 cursor-pointer"
+              title="Simulate battery level dropping to 12% to test low-battery auto-alert"
+            >
+              <BatteryWarning className="w-3 h-3 text-amber-600" />
+              <span>Test Battery Alert (12%)</span>
             </button>
           </div>
 

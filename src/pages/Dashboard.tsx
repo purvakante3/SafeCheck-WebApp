@@ -17,7 +17,6 @@ import {
   PhoneCall,
   ExternalLink,
   Phone,
-  Radio,
   QrCode,
   Copy,
   MessageSquare,
@@ -592,11 +591,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <Siren className="w-5 h-5 text-white" />
               <span>{t('triggerImmediateSosBtn')}</span>
             </button>
-
-            <div className="flex items-center justify-center space-x-1.5 text-[11px] text-[#C4BCB6]">
-              <Radio className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
-              <span>{t('hardwareTip', { count: settings?.hardwarePressCount || 4 })}</span>
-            </div>
           </div>
         </div>
       </div>

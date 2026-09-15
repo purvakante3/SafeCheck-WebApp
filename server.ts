@@ -1284,8 +1284,11 @@ async function startServer() {
       const guardianLink = `${process.env.APP_URL || 'https://safecheck.app'}/?guardian=${sosId}`;
       const activeTripId = req.body.activeTripId || null;
       const sosType = type || req.body.type || 'manual';
+      const isLowBattery = sosType === 'low_battery' || req.body?.type === 'low_battery';
 
-      const alertTitle = isLateEscalation
+      const alertTitle = isLowBattery
+        ? `🔋 LOW BATTERY ALERT: ${destination || 'Active Trip'}`
+        : isLateEscalation
         ? `⚠️ OVERDUE ARRIVAL ALERT: ${destination || 'Destination'}`
         : '🚨 ONE-TAP SOS EMERGENCY ALERT';
 
@@ -1313,45 +1316,52 @@ async function startServer() {
 
       const escalatedToContactIds = contacts.map((c: any) => c.id || c.email || c.name);
 
+      const existingTrip: any = localTrips.get(targetTripId) || {};
+
       const sosTripRecord: any = {
         id: targetTripId,
         userId: userId,
-        userName: userName || 'SafeCheck User',
-        userEmail: userEmail || '',
-        destination: destination || (
+        userName: userName || existingTrip.userName || 'SafeCheck User',
+        userEmail: userEmail || existingTrip.userEmail || '',
+        destination: destination || existingTrip.destination || (
+          isLowBattery ? '🔋 LOW BATTERY AUTO-ALERT' :
           sosType === 'fall_detected' ? '🚨 FALL DETECTED SOS ALERT' :
           sosType === 'voice_activated' ? '🚨 VOICE ACTIVATED SOS ALERT' :
           sosType === 'auto_escalated' ? '🚨 OVERDUE ARRIVAL SOS ALERT' :
           '🚨 ONE-TAP EMERGENCY SOS ALERT'
         ),
-        startTime: triggeredTimestamp,
-        durationMinutes: 0,
-        graceMinutes: 0,
-        status: 'alerted',
-        alertedAt: triggeredTimestamp,
+        startTime: existingTrip.startTime || triggeredTimestamp,
+        durationMinutes: existingTrip.durationMinutes || 0,
+        graceMinutes: existingTrip.graceMinutes || 0,
+        status: isLowBattery ? (existingTrip.status || 'active') : 'alerted',
+        alertedAt: isLowBattery ? (existingTrip.alertedAt || null) : triggeredTimestamp,
         // Specific SOS fields directly in trip document:
-        isSosEvent: true,
-        sosType: sosType,
-        sosTimestamp: triggeredTimestamp,
+        isSosEvent: isLowBattery ? Boolean(existingTrip.isSosEvent) : true,
+        sosType: isLowBattery ? (existingTrip.sosType || 'low_battery') : sosType,
+        sosTimestamp: isLowBattery ? (existingTrip.sosTimestamp || null) : triggeredTimestamp,
         sosLocation: { lat, lng },
-        sosStatus: isLateEscalation ? 'escalated' : 'active',
-        escalatedTo: escalatedToContactIds,
+        sosStatus: isLowBattery ? (existingTrip.sosStatus || 'active') : (isLateEscalation ? 'escalated' : 'active'),
+        escalatedTo: isLowBattery ? (existingTrip.escalatedTo || []) : escalatedToContactIds,
         // Location coordinates and urls
         latitude: lat,
         longitude: lng,
         location: { lat, lng },
         gps: { latitude: lat, longitude: lng },
         locationUrl: resolvedLocUrl,
-        countdownStartedAt: countdownStartedAt || triggeredTimestamp,
-        respondedAt: null,
-        escalatedAt: isLateEscalation ? triggeredTimestamp : null,
+        countdownStartedAt: isLowBattery ? existingTrip.countdownStartedAt : (countdownStartedAt || triggeredTimestamp),
+        respondedAt: existingTrip.respondedAt || null,
+        escalatedAt: isLowBattery ? existingTrip.escalatedAt : (isLateEscalation ? triggeredTimestamp : null),
         emergencyContactsNotified: initialContactsNotified,
         notifiedContacts: initialNotifiedSummary,
         notifiedCount: 0,
+        ...(isLowBattery ? {
+          lowBatteryAlertSent: true,
+          lowBatteryAlertSentAt: triggeredTimestamp,
+          lowBatteryLevel: req.body?.batteryPct || (typeof req.body?.batteryLevel === 'number' ? Math.round(req.body.batteryLevel * 100) : 14),
+        } : {}),
       };
 
       // Store in memory localTrips
-      const existingTrip = localTrips.get(targetTripId) || {};
       localTrips.set(targetTripId, { ...existingTrip, ...sosTripRecord });
 
       if (isFirebaseAvailable && db) {
@@ -1425,13 +1435,17 @@ async function startServer() {
 
       const subject =
         customSubject ||
-        (isLateEscalation
+        (isLowBattery
+          ? `🔋 Low Battery Alert: ${userName || 'SafeCheck User'}'s phone battery is low during active trip`
+          : isLateEscalation
           ? `⚠️ OVERDUE ARRIVAL ALERT: ${userName || 'SafeCheck User'} has not arrived at ${destination || 'destination'}`
           : `🚨 URGENT SOS ALERT: ${userName || 'A user'} activated One-Tap Emergency SOS!`);
 
       let bodySummary =
         customMessage ||
-        (isLateEscalation
+        (isLowBattery
+          ? `LOW BATTERY ALERT: ${userName || 'User'}'s phone battery is low during active trip to "${destination || 'destination'}". 🛡️ Live Guardian View: ${guardianLink}`
+          : isLateEscalation
           ? `AUTOMATED ARRIVAL TIMEOUT: ${userName || 'User'} scheduled a trip to "${destination || 'destination'}" but did not confirm arrival and did not respond within the 2-minute safety check window. 🛡️ Live Guardian View: ${guardianLink}`
           : `ONE-TAP SOS ACTIVATED by ${userName || 'User'} (${userEmail}). Immediate emergency assistance requested. 🛡️ Live Guardian View: ${guardianLink}`);
 
@@ -1441,9 +1455,13 @@ async function startServer() {
         bodySummary += ` 📍 GPS: ${latitude}, ${longitude}`;
       }
 
-      let emailText = isLateEscalation
-        ? `⚠️ AUTOMATED TRIP ARRIVAL SAFETY ALERT\n\n${userName} (${userEmail}) started a safety check-in for a trip to "${destination || 'destination'}".\n\nThe expected arrival time has passed, the user did not mark themselves as arrived, and they did not respond within the 2-minute safety check window.\n`
-        : `URGENT SOS EMERGENCY ALERT\n\n${userName} (${userEmail}) activated the One-Tap SOS emergency alert on SafeCheck.\n`;
+      let emailText = customMessage
+        ? `${customMessage}\n\n`
+        : (isLowBattery
+          ? `🔋 LOW BATTERY SAFETY ALERT\n\n${userName} (${userEmail || 'SafeCheck User'})'s phone battery is low during an active trip to "${destination || 'destination'}".\n`
+          : isLateEscalation
+          ? `⚠️ AUTOMATED TRIP ARRIVAL SAFETY ALERT\n\n${userName} (${userEmail}) started a safety check-in for a trip to "${destination || 'destination'}".\n\nThe expected arrival time has passed, the user did not mark themselves as arrived, and they did not respond within the 2-minute safety check window.\n`
+          : `URGENT SOS EMERGENCY ALERT\n\n${userName} (${userEmail}) activated the One-Tap SOS emergency alert on SafeCheck.\n`);
 
       if (locationUrl) {
         emailText += `\n📍 LIVE EMERGENCY LOCATION (Google Maps):\n${locationUrl}\n`;
@@ -1465,15 +1483,15 @@ async function startServer() {
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #FBF7F4; color: #2D2329; }
     .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #E8DDD9; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-    .header { background: #9E1C38; padding: 24px; text-align: center; color: #ffffff; }
+    .header { background: ${isLowBattery ? '#B45309' : '#9E1C38'}; padding: 24px; text-align: center; color: #ffffff; }
     .header h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px; }
     .header p { margin: 8px 0 0 0; font-size: 13px; opacity: 0.9; }
     .content { padding: 28px 24px; }
-    .user-box { background: #FAF3F0; border-left: 4px solid #9E1C38; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; }
+    .user-box { background: #FAF3F0; border-left: 4px solid ${isLowBattery ? '#B45309' : '#9E1C38'}; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; }
     .user-box strong { font-size: 16px; color: #2D2329; }
     .user-box p { margin: 4px 0 0 0; font-size: 13px; color: #6E5D65; }
     .action-btn { display: inline-block; padding: 12px 22px; margin: 8px 6px 8px 0; border-radius: 10px; font-weight: 700; text-decoration: none; font-size: 14px; text-align: center; }
-    .btn-maps { background: #9E1C38; color: #ffffff !important; }
+    .btn-maps { background: ${isLowBattery ? '#B45309' : '#9E1C38'}; color: #ffffff !important; }
     .btn-guardian { background: #2D2329; color: #ffffff !important; }
     .footer { padding: 18px 24px; background: #F6EFEA; border-top: 1px solid #E8DDD9; font-size: 11px; color: #8C7B83; text-align: center; }
   </style>
@@ -1481,18 +1499,20 @@ async function startServer() {
 <body>
   <div class="container">
     <div class="header">
-      <h1>${isLateEscalation ? '⚠️ OVERDUE ARRIVAL SAFETY ALERT' : '🚨 URGENT EMERGENCY SOS ALERT'}</h1>
-      <p>SafeCheck Personal Safety System • Immediate Action Advised</p>
+      <h1>${isLowBattery ? '🔋 LOW BATTERY SAFETY ALERT' : isLateEscalation ? '⚠️ OVERDUE ARRIVAL SAFETY ALERT' : '🚨 URGENT EMERGENCY SOS ALERT'}</h1>
+      <p>SafeCheck Personal Safety System • ${isLowBattery ? 'Automatic Battery Notification' : 'Immediate Action Advised'}</p>
     </div>
     <div class="content">
       <div class="user-box">
         <strong>${userName}</strong> (${userEmail || 'SafeCheck User'})
-        <p>${isLateEscalation ? `Scheduled trip to "${destination || 'destination'}" was not marked safe within grace period.` : 'Triggered the One-Tap Emergency SOS button requesting immediate emergency assistance.'}</p>
+        <p>${customMessage || (isLowBattery ? `Phone battery dropped below 15% during active trip to "${destination || 'destination'}".` : isLateEscalation ? `Scheduled trip to "${destination || 'destination'}" was not marked safe within grace period.` : 'Triggered the One-Tap Emergency SOS button requesting immediate emergency assistance.')}</p>
       </div>
 
       <p style="font-size: 14px; line-height: 1.6; color: #4A3B43;">
-        You are designated as an emergency contact for <strong>${userName}</strong>.
-        Please attempt to reach them immediately or contact emergency services if needed.
+        ${isLowBattery
+          ? `You are designated as an emergency contact for <strong>${userName}</strong>. This automated alert was triggered because their phone battery dropped below 15% during an active trip. Last known location and trip details are provided below.`
+          : `You are designated as an emergency contact for <strong>${userName}</strong>. Please attempt to reach them immediately or contact emergency services if needed.`
+        }
       </p>
 
       <div style="margin: 24px 0;">
@@ -1534,13 +1554,15 @@ async function startServer() {
         deliveredAt?: string;
       }> = [];
 
+      const alertStage = isLowBattery ? 'low_battery' : 'alert';
+
       if (validContacts.length === 0) {
         console.warn(`[SafeCheck SOS Dispatch] ⚠️ 0 emergency contacts with email configured for ${userId}. No emails can be sent.`);
         logs.unshift({
           id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           tripId: sosId,
           destination: alertTitle,
-          stage: 'alert',
+          stage: alertStage as any,
           recipient: 'No contacts configured',
           subject,
           sentAt: now.toISOString(),
@@ -1569,7 +1591,7 @@ async function startServer() {
             id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
             tripId: sosId,
             destination: alertTitle,
-            stage: 'alert',
+            stage: alertStage as any,
             recipient: `${contact.name} <${contact.email}>`,
             subject,
             sentAt: now.toISOString(),
@@ -1608,7 +1630,7 @@ async function startServer() {
                 id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
                 tripId: sosId,
                 destination: alertTitle,
-                stage: 'alert',
+                stage: alertStage as any,
                 recipient: `${contact.name} <${contact.email}>`,
                 subject,
                 sentAt: now.toISOString(),

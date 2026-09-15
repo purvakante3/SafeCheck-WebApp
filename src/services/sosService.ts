@@ -329,7 +329,7 @@ export async function createSOSEventDocument(data: {
 
   // Exact fields specified by user:
   // - isSosEvent: true
-  // - sosType: "manual" | "fall_detected" | "voice_activated"
+  // - sosType: "manual" | "fall_detected"
   // - sosTimestamp
   // - sosLocation: { lat, lng }
   // - sosStatus: "active" | "resolved" | "escalated"
@@ -341,7 +341,6 @@ export async function createSOSEventDocument(data: {
     userEmail: data.userEmail || null,
     destination: data.destination || (
       data.type === 'fall_detected' ? '🚨 FALL DETECTED SOS ALERT' :
-      data.type === 'voice_activated' ? '🚨 VOICE ACTIVATED SOS ALERT' :
       data.type === 'auto_escalated' ? '🚨 AUTOMATICALLY ESCALATED SOS ALERT' :
       '🚨 ONE-TAP EMERGENCY SOS ALERT'
     ),
@@ -433,7 +432,6 @@ export async function createSOSEventDocument(data: {
  * Triggers an SOS alert across all mechanisms:
  * - Manual Panic SOS (Dashboard or Active Trip)
  * - Fall Detection (Sensor confirmed)
- * - Voice Wake Word ("SafeCheck Emergency")
  * - Late Arrival Escalation (Timeout unacknowledged)
  * 
  * ARCHITECTURAL RULE:
@@ -1124,8 +1122,6 @@ export async function migrateLegacySOSTrips(userId?: string): Promise<{
       const destLower = (data.destination || '').toLowerCase();
       if (destLower.includes('fall') || destLower.includes('impact')) {
         eventType = 'fall_detected';
-      } else if (destLower.includes('voice') || destLower.includes('wake')) {
-        eventType = 'voice_activated';
       }
 
       // Determine Status
@@ -1497,7 +1493,6 @@ export async function restoreSOSEventsToFirestore(userId: string): Promise<{
         userEmail: raw.userEmail || null,
         destination: raw.destination || (
           raw.type === 'fall_detected' ? '🚨 FALL DETECTED SOS ALERT' :
-          raw.type === 'voice_activated' ? '🚨 VOICE ACTIVATED SOS ALERT' :
           raw.type === 'auto_escalated' ? '🚨 AUTOMATICALLY ESCALATED SOS ALERT' :
           '🚨 ONE-TAP EMERGENCY SOS ALERT'
         ),

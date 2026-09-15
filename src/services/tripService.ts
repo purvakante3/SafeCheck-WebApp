@@ -213,6 +213,9 @@ export async function createTrip(
     lastKnownLongitude: options.startLongitude || options.longitude || null,
     lastKnownAddress: options.startAddress || null,
     lastLocationUpdate: now,
+    lowBatteryAlertSent: false,
+    lowBatteryAlertSentAt: null,
+    lowBatteryLevel: null,
   };
 
   let createdTripId = '';

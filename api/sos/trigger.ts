@@ -1,4 +1,18 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+// Self-contained Vercel serverless request/response types
+export interface VercelRequest {
+  method?: string;
+  body: any;
+  headers: Record<string, string | string[] | undefined>;
+  query?: Record<string, string | string[] | undefined>;
+}
+
+export interface VercelResponse {
+  status: (code: number) => VercelResponse;
+  json: (body: any) => void;
+  setHeader: (name: string, value: string) => VercelResponse;
+  end: () => void;
+}
+
 import nodemailer from 'nodemailer';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -150,17 +164,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `[Vercel SOS API] Dispatching alert for user "${userName}" (${userId}). Contacts with email: ${validContacts.length}. Transporter ready: ${Boolean(transporter)}`
     );
 
+    const isLowBattery = type === 'low_battery';
+
     // Construct Subject
     const subject =
       customSubject ||
-      (isLateEscalation
+      (isLowBattery
+        ? `🔋 Low Battery Alert: ${userName || 'SafeCheck User'}'s phone battery is low during active trip`
+        : isLateEscalation
         ? `⚠️ OVERDUE ARRIVAL ALERT: ${userName || 'SafeCheck User'} has not arrived at ${destination || 'destination'}`
         : `🚨 URGENT SOS ALERT: ${userName || 'A user'} activated One-Tap Emergency SOS!`);
 
     // Plain text email content
-    let emailText = isLateEscalation
-      ? `⚠️ AUTOMATED TRIP ARRIVAL SAFETY ALERT\n\n${userName} (${userEmail || 'User'}) started a safety check-in for a trip to "${destination || 'destination'}".\n\nThe expected arrival time has passed, the user did not mark themselves as arrived, and they did not respond within the safety check grace period.\n`
-      : `URGENT SOS EMERGENCY ALERT\n\n${userName} (${userEmail || 'User'}) activated the One-Tap SOS emergency alert on SafeCheck.\n`;
+    let emailText = customMessage
+      ? `${customMessage}\n\n`
+      : (isLowBattery
+        ? `🔋 LOW BATTERY SAFETY ALERT\n\n${userName || 'SafeCheck User'} (${userEmail || 'User'})'s phone battery is low during an active trip to "${destination || 'destination'}".\n`
+        : isLateEscalation
+        ? `⚠️ AUTOMATED TRIP ARRIVAL SAFETY ALERT\n\n${userName} (${userEmail || 'User'}) started a safety check-in for a trip to "${destination || 'destination'}".\n\nThe expected arrival time has passed, the user did not mark themselves as arrived, and they did not respond within the safety check grace period.\n`
+        : `URGENT SOS EMERGENCY ALERT\n\n${userName} (${userEmail || 'User'}) activated the One-Tap SOS emergency alert on SafeCheck.\n`);
 
     if (resolvedLocUrl) {
       emailText += `\n📍 LIVE EMERGENCY LOCATION (Google Maps):\n${resolvedLocUrl}\n`;
@@ -183,15 +205,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #FBF7F4; color: #2D2329; }
     .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #E8DDD9; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-    .header { background: #9E1C38; padding: 24px; text-align: center; color: #ffffff; }
+    .header { background: ${isLowBattery ? '#B45309' : '#9E1C38'}; padding: 24px; text-align: center; color: #ffffff; }
     .header h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px; }
     .header p { margin: 8px 0 0 0; font-size: 13px; opacity: 0.9; }
     .content { padding: 28px 24px; }
-    .user-box { background: #FAF3F0; border-left: 4px solid #9E1C38; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; }
+    .user-box { background: #FAF3F0; border-left: 4px solid ${isLowBattery ? '#B45309' : '#9E1C38'}; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; }
     .user-box strong { font-size: 16px; color: #2D2329; }
     .user-box p { margin: 4px 0 0 0; font-size: 13px; color: #6E5D65; }
     .action-btn { display: inline-block; padding: 12px 22px; margin: 8px 6px 8px 0; border-radius: 10px; font-weight: 700; text-decoration: none; font-size: 14px; text-align: center; }
-    .btn-maps { background: #9E1C38; color: #ffffff !important; }
+    .btn-maps { background: ${isLowBattery ? '#B45309' : '#9E1C38'}; color: #ffffff !important; }
     .btn-guardian { background: #2D2329; color: #ffffff !important; }
     .footer { padding: 18px 24px; background: #F6EFEA; border-top: 1px solid #E8DDD9; font-size: 11px; color: #8C7B83; text-align: center; }
   </style>
@@ -199,18 +221,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 <body>
   <div class="container">
     <div class="header">
-      <h1>${isLateEscalation ? '⚠️ OVERDUE ARRIVAL SAFETY ALERT' : '🚨 URGENT EMERGENCY SOS ALERT'}</h1>
-      <p>SafeCheck Personal Safety System • Immediate Action Advised</p>
+      <h1>${isLowBattery ? '🔋 LOW BATTERY SAFETY ALERT' : isLateEscalation ? '⚠️ OVERDUE ARRIVAL SAFETY ALERT' : '🚨 URGENT EMERGENCY SOS ALERT'}</h1>
+      <p>SafeCheck Personal Safety System • ${isLowBattery ? 'Automatic Battery Notification' : 'Immediate Action Advised'}</p>
     </div>
     <div class="content">
       <div class="user-box">
         <strong>${userName || 'SafeCheck User'}</strong> (${userEmail || 'SafeCheck User'})
-        <p>${isLateEscalation ? `Scheduled trip to "${destination || 'destination'}" was not marked safe within the grace period.` : 'Triggered the One-Tap Emergency SOS button requesting immediate emergency assistance.'}</p>
+        <p>${customMessage || (isLowBattery ? `Phone battery dropped below 15% during active trip to "${destination || 'destination'}".` : isLateEscalation ? `Scheduled trip to "${destination || 'destination'}" was not marked safe within the grace period.` : 'Triggered the One-Tap Emergency SOS button requesting immediate emergency assistance.')}</p>
       </div>
 
       <p style="font-size: 14px; line-height: 1.6; color: #4A3B43;">
-        You are designated as an emergency contact for <strong>${userName || 'this user'}</strong>.
-        Please attempt to reach them immediately or contact emergency services if needed.
+        ${isLowBattery
+          ? `You are designated as an emergency contact for <strong>${userName || 'this user'}</strong>. This automated alert was triggered because their phone battery dropped below 15% during an active trip. Last known location and trip details are provided below.`
+          : `You are designated as an emergency contact for <strong>${userName || 'this user'}</strong>. Please attempt to reach them immediately or contact emergency services if needed.`
+        }
       </p>
 
       <div style="margin: 24px 0;">

@@ -46,7 +46,7 @@ export interface AudioEvidence {
   createdAt?: string;
 }
 
-export type SOSEventType = 'manual' | 'fall_detected' | 'voice_activated' | 'auto_escalated' | string;
+export type SOSEventType = 'manual' | 'fall_detected' | 'auto_escalated' | 'low_battery' | string;
 export type SOSEventStatus = 'active' | 'resolved' | 'escalated';
 
 export interface NotifiedEmergencyContact {
@@ -172,7 +172,7 @@ export interface Trip {
   notifiedCount?: number;
   notifiedContacts?: string[];
   isSosEvent?: boolean;
-  sosType?: 'manual' | 'fall_detected' | 'voice_activated' | string;
+  sosType?: 'manual' | 'fall_detected' | string;
   sosTimestamp?: string;
   sosLocation?: { lat: number | null; lng: number | null };
   sosStatus?: 'active' | 'resolved' | 'escalated';
@@ -199,6 +199,9 @@ export interface Trip {
   arrivedAt?: string | null;
   lateResponses?: LateTripResponse[];
   autoEscalated?: boolean;
+  lowBatteryAlertSent?: boolean;
+  lowBatteryAlertSentAt?: string | null;
+  lowBatteryLevel?: number | null;
 }
 
 export interface AppSettings {
@@ -212,24 +215,9 @@ export interface AppSettings {
   checkInReminderIntervalMinutes: number;
   autoAlertIfNotAcknowledged: boolean;
   unacknowledgedTimeoutMinutes: number;
-  // Hardware multi-press SOS Listener & Desktop Keyboard Shortcut
-  hardwareSosTriggerEnabled: boolean;
-  hardwarePressCount: number;
-  hardwareSosEnabled?: boolean;
-  desktopSosShortcutEnabled?: boolean;
-  desktopSosShortcut?: 'Ctrl+Shift+S' | 'Alt+Shift+S' | 'Space_Triple' | 'F8';
   // Quick Dial / Helpline Settings
   quickDialNumber: string;
   quickDialLabel: string;
-  // Voice-Activated SOS
-  voiceSosEnabled: boolean;
-  voiceWakePhrase: string;
-  voiceSosWakePhrase?: string;
-  voiceWakePhrases?: {
-    en: string;
-    hi: string;
-    mr: string;
-  };
   // Fall / Impact Detection
   fallDetectionEnabled: boolean;
   fallCountdownSeconds: number;
@@ -245,7 +233,7 @@ export interface EmailNotificationLog {
   id: string;
   tripId: string;
   destination: string;
-  stage: 'reminder' | 'alert';
+  stage: 'reminder' | 'alert' | 'low_battery';
   recipient: string;
   subject: string;
   sentAt: string;

@@ -535,30 +535,6 @@ export const StartTrip: React.FC<StartTripProps> = ({
                   className="w-full bg-white border border-amber-300 rounded-xl px-3.5 py-2.5 text-sm text-[#3A3A3A] focus:outline-none focus:ring-2 focus:ring-[#C88EA7] focus:border-[#C88EA7]"
                   required
                 />
-
-                {/* Quick preset destination chips */}
-                <div className="pt-1 flex flex-wrap gap-1.5 items-center">
-                  <span className="text-[11px] text-amber-800 font-medium mr-0.5">Quick picks:</span>
-                  {[
-                    'Home',
-                    'Office',
-                    'Hostel',
-                    'Central Station',
-                    'Metro Station',
-                    'Gym',
-                    'Library',
-                    'Friend\'s Place',
-                  ].map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => setDestination(preset)}
-                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100 border border-amber-200 text-[11px] font-medium text-amber-950 transition-all cursor-pointer shadow-2xs"
-                    >
-                      {preset}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Offline Duration Quick Presets */}
@@ -673,33 +649,6 @@ export const StartTrip: React.FC<StartTripProps> = ({
                   iconType="destination"
                   required
                 />
-              </div>
-
-              {/* Quick preset destination chips */}
-              <div className="pt-1">
-                <div className="flex flex-wrap gap-1.5 items-center">
-                  <span className="text-[11px] text-[#7D757A] font-medium mr-0.5">Quick picks:</span>
-                  {[
-                    'Home',
-                    'Office',
-                    'Thane Station',
-                    'Metro Station',
-                    'Airport',
-                    'Gym',
-                    'Friend\'s Place',
-                  ].map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => {
-                        handleDestinationChange(preset);
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-[#F2EAE4] border border-[#EFE8E1] text-[11px] font-medium text-[#4A4347] transition-all cursor-pointer shadow-2xs"
-                    >
-                      {preset}
-                    </button>
-                  ))}
-                </div>
               </div>
             </div>
           )}

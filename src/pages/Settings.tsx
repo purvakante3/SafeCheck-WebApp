@@ -1,13 +1,10 @@
 import React, { useState } from 'react';
-import { Settings as SettingsIcon, PhoneCall, MapPin, Check, Save, RotateCcw, Play, ExternalLink, ShieldCheck, AlertTriangle, Volume2, Sparkles, Smartphone, BellRing, Phone, Radio, RadioTower, Clock, ShieldAlert, Mic, Activity, Disc, Download, Info, Globe, Copy, Keyboard, Database, FileAudio, CheckCircle2 } from 'lucide-react';
+import { Settings as SettingsIcon, PhoneCall, MapPin, Check, Save, RotateCcw, Play, ExternalLink, ShieldCheck, AlertTriangle, Volume2, Sparkles, Smartphone, BellRing, Phone, Clock, Activity, Disc, Download, Info, Globe, Copy, BatteryWarning } from 'lucide-react';
 import { AppSettings } from '../types';
 import { saveAppSettings, DEFAULT_SETTINGS } from '../services/settingsService';
 import { getCurrentLocation, formatGoogleMapsUrl, shareLocationUrl } from '../services/locationService';
-import { isSpeechRecognitionSupported, requestMicrophonePermission } from '../services/voiceSosService';
 import { isDeviceMotionSupported, requestMotionPermissionIOS } from '../services/fallDetectionService';
 import { isAudioSnapshotSupported } from '../services/audioSnapshotService';
-import { migrateLegacySOSTrips, restoreSOSEventsToFirestore, createSampleSOSEvent } from '../services/sosService';
-import { auth } from '../services/firebase';
 import { usePWAInstallPrompt } from '../hooks/usePWAInstallPrompt';
 import { useLanguage } from '../i18n/LanguageContext';
 import { SupportedLanguage } from '../i18n/translations';
@@ -17,7 +14,6 @@ interface SettingsProps {
   onSave?: (newSettings: AppSettings) => void;
   onUpdateSettings?: (newSettings: AppSettings) => void;
   onTriggerFakeCall?: () => void;
-  onTriggerHardwareSosTest?: () => void;
   onNavigate?: (page: string) => void;
 }
 
@@ -26,7 +22,6 @@ export const Settings: React.FC<SettingsProps> = ({
   onSave,
   onUpdateSettings,
   onTriggerFakeCall,
-  onTriggerHardwareSosTest,
   onNavigate,
 }) => {
   const { language, setLanguage, languages, t } = useLanguage();
@@ -44,12 +39,6 @@ export const Settings: React.FC<SettingsProps> = ({
   const [autoAlertIfNotAcknowledged, setAutoAlertIfNotAcknowledged] = useState(currentSettings.autoAlertIfNotAcknowledged ?? true);
   const [unacknowledgedTimeoutMinutes, setUnacknowledgedTimeoutMinutes] = useState(currentSettings.unacknowledgedTimeoutMinutes ?? 5);
 
-  // Hardware Multi-press & Desktop Shortcut SOS
-  const [hardwareSosTriggerEnabled, setHardwareSosTriggerEnabled] = useState(currentSettings.hardwareSosTriggerEnabled ?? true);
-  const [hardwarePressCount, setHardwarePressCount] = useState(currentSettings.hardwarePressCount ?? 4);
-  const [desktopSosShortcutEnabled, setDesktopSosShortcutEnabled] = useState(currentSettings.desktopSosShortcutEnabled ?? true);
-  const [desktopSosShortcut, setDesktopSosShortcut] = useState(currentSettings.desktopSosShortcut || 'Ctrl+Shift+S');
-
   // Quick Dial / Helpline
   const [quickDialNumber, setQuickDialNumber] = useState(currentSettings.quickDialNumber || '1091');
   const [quickDialLabel, setQuickDialLabel] = useState(currentSettings.quickDialLabel || "Women's Safety Helpline (1091)");
@@ -57,12 +46,6 @@ export const Settings: React.FC<SettingsProps> = ({
 
   // Location settings
   const [enableLocationByDefault, setEnableLocationByDefault] = useState(currentSettings.enableLocationByDefault ?? true);
-
-  // Voice SOS settings
-  const [voiceSosEnabled, setVoiceSosEnabled] = useState(currentSettings.voiceSosEnabled ?? true);
-  const [voiceSosWakePhrase, setVoiceSosWakePhrase] = useState(currentSettings.voiceSosWakePhrase || 'help me');
-  const [micTesting, setMicTesting] = useState(false);
-  const [micResult, setMicResult] = useState<string | null>(null);
 
   // Fall Detection settings
   const [fallDetectionEnabled, setFallDetectionEnabled] = useState(currentSettings.fallDetectionEnabled ?? true);
@@ -77,97 +60,6 @@ export const Settings: React.FC<SettingsProps> = ({
   const { isInstallable, isInstalled, promptInstall } = usePWAInstallPrompt();
 
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [migrating, setMigrating] = useState(false);
-  const [migrationResult, setMigrationResult] = useState<{
-    success: boolean;
-    scanned: number;
-    migratedSosCount: number;
-    migratedAudioCount: number;
-    removedFromTripsCount: number;
-    message?: string;
-  } | null>(null);
-
-  const handleRunMigration = async () => {
-    setMigrating(true);
-    setMigrationResult(null);
-    try {
-      const res = await migrateLegacySOSTrips();
-      setMigrationResult({
-        success: true,
-        scanned: res.scanned,
-        migratedSosCount: res.migratedSosCount,
-        migratedAudioCount: res.migratedAudioCount,
-        removedFromTripsCount: res.removedFromTripsCount,
-      });
-    } catch (err: any) {
-      setMigrationResult({
-        success: false,
-        scanned: 0,
-        migratedSosCount: 0,
-        migratedAudioCount: 0,
-        removedFromTripsCount: 0,
-        message: err?.message || 'Migration error',
-      });
-    } finally {
-      setMigrating(false);
-    }
-  };
-
-  const [restoring, setRestoring] = useState(false);
-  const [seeding, setSeeding] = useState(false);
-  const [restoreStatus, setRestoreStatus] = useState<{
-    success: boolean;
-    restoredCount: number;
-    totalFound: number;
-    message?: string;
-  } | null>(null);
-
-  const handleRestoreSOSEvents = async () => {
-    setRestoring(true);
-    setRestoreStatus(null);
-    try {
-      const uid = auth.currentUser?.uid || 'user';
-      const res = await restoreSOSEventsToFirestore(uid);
-      setRestoreStatus({
-        success: true,
-        restoredCount: res.restoredCount,
-        totalFound: res.totalFound,
-        message: `Synchronized ${res.restoredCount} SOS events directly to Firestore trips collection.`,
-      });
-    } catch (err: any) {
-      setRestoreStatus({
-        success: false,
-        restoredCount: 0,
-        totalFound: 0,
-        message: err?.message || 'Restore error',
-      });
-    } finally {
-      setRestoring(false);
-    }
-  };
-
-  const handleCreateSampleSOSEvent = async () => {
-    setSeeding(true);
-    try {
-      const uid = auth.currentUser?.uid || 'user';
-      const ev = await createSampleSOSEvent(uid);
-      setRestoreStatus({
-        success: true,
-        restoredCount: 1,
-        totalFound: 1,
-        message: `Verified sample SOS event created in Firestore trips (${ev.sos_id}). Check Firebase Console now!`,
-      });
-    } catch (err: any) {
-      setRestoreStatus({
-        success: false,
-        restoredCount: 0,
-        totalFound: 0,
-        message: err?.message || 'Failed to create sample SOS event',
-      });
-    } finally {
-      setSeeding(false);
-    }
-  };
 
   const [locationTesting, setLocationTesting] = useState(false);
   const [locationResult, setLocationResult] = useState<{
@@ -187,23 +79,6 @@ export const Settings: React.FC<SettingsProps> = ({
 
   const handleSimulateFall = () => {
     window.dispatchEvent(new CustomEvent('safecheck:simulate-fall', { detail: { magnitude: 28.5 } }));
-  };
-
-  const handleTestMicrophone = async () => {
-    setMicTesting(true);
-    setMicResult(null);
-    try {
-      const granted = await requestMicrophonePermission();
-      if (granted) {
-        setMicResult(language === 'hi' ? 'माइक्रोफ़ोन अनुमति सक्रिय! ब्राउज़र वेब स्पीच API तैयार है।' : language === 'mr' ? 'मायक्रोफोन परवानगी सक्रिय! ब्राऊझर वेब स्पीच API तयार आहे.' : 'Microphone permission active! Browser Web Speech API ready.');
-      } else {
-        setMicResult(language === 'hi' ? 'माइक्रोफ़ोन अनुमति अस्वीकृत या इस ब्राउज़र में अनुपलब्ध।' : language === 'mr' ? 'मायक्रोफोन परवानगी नाकारली किंवा अनुपलब्ध.' : 'Microphone permission denied or unsupported in this browser.');
-      }
-    } catch (e: any) {
-      setMicResult(e.message || 'Microphone error');
-    } finally {
-      setMicTesting(false);
-    }
   };
 
   const handleRequestMotionPermission = async () => {
@@ -231,15 +106,8 @@ export const Settings: React.FC<SettingsProps> = ({
       checkInReminderIntervalMinutes: Number(checkInReminderIntervalMinutes) || 15,
       autoAlertIfNotAcknowledged,
       unacknowledgedTimeoutMinutes: Number(unacknowledgedTimeoutMinutes) || 5,
-      hardwareSosTriggerEnabled,
-      hardwarePressCount: Number(hardwarePressCount) || 4,
-      desktopSosShortcutEnabled,
-      desktopSosShortcut: desktopSosShortcut || 'Ctrl+Shift+S',
       quickDialNumber: quickDialNumber.trim() || '1091',
       quickDialLabel: quickDialLabel.trim() || "Women's Safety Helpline (1091)",
-      voiceSosEnabled,
-      voiceWakePhrase: voiceSosWakePhrase.trim().toLowerCase() || 'help me',
-      voiceSosWakePhrase: voiceSosWakePhrase.trim().toLowerCase() || 'help me',
       fallDetectionEnabled,
       fallSensitivity: fallDetectionSensitivity,
       fallDetectionSensitivity,
@@ -264,14 +132,8 @@ export const Settings: React.FC<SettingsProps> = ({
       setCheckInReminderIntervalMinutes(DEFAULT_SETTINGS.checkInReminderIntervalMinutes);
       setAutoAlertIfNotAcknowledged(DEFAULT_SETTINGS.autoAlertIfNotAcknowledged);
       setUnacknowledgedTimeoutMinutes(DEFAULT_SETTINGS.unacknowledgedTimeoutMinutes);
-      setHardwareSosTriggerEnabled(DEFAULT_SETTINGS.hardwareSosTriggerEnabled);
-      setHardwarePressCount(DEFAULT_SETTINGS.hardwarePressCount);
-      setDesktopSosShortcutEnabled(DEFAULT_SETTINGS.desktopSosShortcutEnabled ?? true);
-      setDesktopSosShortcut(DEFAULT_SETTINGS.desktopSosShortcut ?? 'Ctrl+Shift+S');
       setQuickDialNumber(DEFAULT_SETTINGS.quickDialNumber);
       setQuickDialLabel(DEFAULT_SETTINGS.quickDialLabel);
-      setVoiceSosEnabled(DEFAULT_SETTINGS.voiceSosEnabled);
-      setVoiceSosWakePhrase(DEFAULT_SETTINGS.voiceSosWakePhrase);
       setFallDetectionEnabled(DEFAULT_SETTINGS.fallDetectionEnabled);
       setFallDetectionSensitivity(DEFAULT_SETTINGS.fallDetectionSensitivity);
       setFallCountdownSeconds(DEFAULT_SETTINGS.fallCountdownSeconds);
@@ -584,123 +446,26 @@ export const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
             )}
-          </div>
-        </div>
 
-        {/* Section 3: Hardware Multi-Press & Desktop Shortcut SOS Listener */}
-        <div className="bg-white border border-[#EFE8E1] p-6 sm:p-8 rounded-3xl space-y-6 shadow-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between items-start gap-3.5 border-b border-[#EFE8E1] pb-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#F9EDF3] text-[#9E4D71] border border-[#F0D0DF] flex items-center justify-center shrink-0">
-                <RadioTower className="w-5 h-5" />
+            {/* Note on Automatic Low Battery Alert */}
+            <div
+              id="low-battery-alert-settings-note"
+              className="mt-4 p-4 rounded-2xl bg-[#FFF8F0] border border-[#F59E0B]/40 flex items-start space-x-3 text-xs text-[#92400E]"
+            >
+              <div className="w-8 h-8 rounded-xl bg-[#FEF3C7] flex items-center justify-center shrink-0 text-[#D97706] mt-0.5">
+                <BatteryWarning className="w-4 h-4" />
               </div>
-              <div>
-                <h3 className="font-bold text-[#3A3A3A] text-base">{t('hardwareSosSectionTitle')}</h3>
-                <p className="text-xs text-[#6B6368]">
-                  {t('hardwareSosSectionDesc')}
+              <div className="space-y-1">
+                <div className="font-bold text-[#B45309] flex items-center gap-1.5">
+                  <span>🔋 Low Battery Auto-Alert to Contacts</span>
+                  <span className="px-2 py-0.5 rounded-md bg-[#FEF3C7] text-[10px] font-bold text-[#B45309]">
+                    Automatic
+                  </span>
+                </div>
+                <p className="text-[#78350F] leading-relaxed">
+                  When a trip or check-in is active, SafeCheck monitors your device battery level using the browser's Battery Status API (<code className="font-mono text-[10px] bg-[#FEF3C7] px-1 py-0.5 rounded text-[#B45309]">navigator.getBattery()</code>). If your battery drops below <strong>15%</strong> during an active trip, an automated alert email with your battery percentage and last known GPS location is automatically sent to all saved emergency contacts once per trip session.
                 </p>
               </div>
-            </div>
-
-            {onTriggerHardwareSosTest && (
-              <button
-                id="test-hardware-sos-btn"
-                type="button"
-                onClick={onTriggerHardwareSosTest}
-                className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#3A3A3A] hover:bg-[#2A2A2A] text-white font-bold text-xs shadow-xs transition-all w-full sm:w-auto cursor-pointer"
-              >
-                <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                <span>{t('testHardwareSosBtn')}</span>
-              </button>
-            )}
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-start space-x-3">
-              <input
-                id="enable-hardware-sos-checkbox"
-                type="checkbox"
-                checked={hardwareSosTriggerEnabled}
-                onChange={(e) => setHardwareSosTriggerEnabled(e.target.checked)}
-                className="mt-1 w-4 h-4 rounded text-[#B36D8B] focus:ring-[#C88EA7] border-[#EFE8E1] accent-[#B36D8B]"
-              />
-              <div>
-                <label
-                  htmlFor="enable-hardware-sos-checkbox"
-                  className="font-bold text-sm text-[#3A3A3A] cursor-pointer"
-                >
-                  {t('hardwareSosToggle')}
-                </label>
-                <p className="text-xs text-[#6B6368] mt-0.5 leading-relaxed">
-                  {language === 'hi'
-                    ? `स्क्रीन, स्पेसबार या वॉल्यूम बटन को तेजी से ${hardwarePressCount} बार दबाने पर तुरंत शांत आपातकालीन SOS भेजा जाता है।`
-                    : language === 'mr'
-                    ? `स्क्रीन, स्पेसबार किंवा व्हॉल्यूम बटण वेगाने ${hardwarePressCount} वेळा दाबल्यास तात्काळ शांत आपत्कालीन SOS पाठवला जातो.`
-                    : `Pressing the Volume buttons, Space, or Media keys ${hardwarePressCount} times rapidly dispatches the emergency SOS alert with GPS coordinates.`}
-                </p>
-              </div>
-            </div>
-
-            {hardwareSosTriggerEnabled && (
-              <div className="pl-0 sm:pl-7 pt-2 border-t border-[#EFE8E1] flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                <label htmlFor="press-count-select" className="text-xs font-semibold text-[#6B6368] shrink-0">
-                  {t('hardwarePressCountLabel')}:
-                </label>
-                <select
-                  id="press-count-select"
-                  value={hardwarePressCount}
-                  onChange={(e) => setHardwarePressCount(Number(e.target.value))}
-                  className="w-full sm:w-auto bg-[#FAF6F3] border border-[#EFE8E1] rounded-xl px-3 py-2 sm:py-1.5 text-xs text-[#3A3A3A] font-semibold focus:outline-none focus:border-[#C88EA7]"
-                >
-                  <option value={3}>3</option>
-                  <option value={4}>4 ({language === 'hi' ? 'अनुशंसित' : language === 'mr' ? 'शिफारस केलेले' : 'Recommended'})</option>
-                  <option value={5}>5</option>
-                </select>
-              </div>
-            )}
-
-            {/* Desktop Shortcut Alternative */}
-            <div className="pt-3 border-t border-[#EFE8E1] space-y-3">
-              <div className="flex items-start space-x-3">
-                <input
-                  id="enable-desktop-sos-shortcut-checkbox"
-                  type="checkbox"
-                  checked={desktopSosShortcutEnabled}
-                  onChange={(e) => setDesktopSosShortcutEnabled(e.target.checked)}
-                  className="mt-1 w-4 h-4 rounded text-[#B36D8B] focus:ring-[#C88EA7] border-[#EFE8E1] accent-[#B36D8B]"
-                />
-                <div>
-                  <label
-                    htmlFor="enable-desktop-sos-shortcut-checkbox"
-                    className="font-bold text-sm text-[#3A3A3A] cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Keyboard className="w-3.5 h-3.5 text-[#9E4D71]" />
-                    <span>{t('desktopSosShortcutLabel')}</span>
-                  </label>
-                  <p className="text-xs text-[#6B6368] mt-0.5 leading-relaxed">
-                    {t('desktopSosShortcutDesc')}
-                  </p>
-                </div>
-              </div>
-
-              {desktopSosShortcutEnabled && (
-                <div className="pl-0 sm:pl-7 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                  <label htmlFor="desktop-sos-shortcut-select" className="text-xs font-semibold text-[#6B6368] shrink-0">
-                    {language === 'hi' ? 'कीबोर्ड शॉर्टकट:' : language === 'mr' ? 'कीबोर्ड शॉर्टकट:' : 'Keyboard Shortcut:'}
-                  </label>
-                  <select
-                    id="desktop-sos-shortcut-select"
-                    value={desktopSosShortcut}
-                    onChange={(e) => setDesktopSosShortcut(e.target.value)}
-                    className="w-full sm:w-auto bg-[#FAF6F3] border border-[#EFE8E1] rounded-xl px-3 py-2 sm:py-1.5 text-xs text-[#3A3A3A] font-semibold font-mono focus:outline-none focus:border-[#C88EA7]"
-                  >
-                    <option value="Ctrl+Shift+S">Ctrl + Shift + S ({language === 'hi' ? 'डिफ़ॉल्ट' : language === 'mr' ? 'डिफॉल्ट' : 'Default'})</option>
-                    <option value="Alt+Shift+S">Alt + Shift + S</option>
-                    <option value="Ctrl+Alt+S">Ctrl + Alt + S</option>
-                    <option value="F8">F8 ({language === 'hi' ? 'एकल कुंजी' : language === 'mr' ? 'एकच की' : 'Single Function Key'})</option>
-                  </select>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -918,90 +683,7 @@ export const Settings: React.FC<SettingsProps> = ({
           </div>
         </div>
 
-        {/* Section 7: Voice-Activated SOS (Web Speech API) */}
-        <div className="bg-white border border-[#EFE8E1] p-6 sm:p-8 rounded-3xl space-y-6 shadow-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between items-start gap-3.5 border-b border-[#EFE8E1] pb-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#F9EDF3] text-[#9E4D71] border border-[#F0D0DF] flex items-center justify-center shrink-0">
-                <Mic className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-[#3A3A3A] text-base">{t('voiceSosSectionTitle')}</h3>
-                <p className="text-xs text-[#6B6368]">
-                  {t('voiceSosSectionDesc')}
-                </p>
-              </div>
-            </div>
-
-            <button
-              id="test-mic-permission-btn"
-              type="button"
-              onClick={handleTestMicrophone}
-              disabled={micTesting}
-              className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#F9EDF3] hover:bg-[#F3DEE8] text-[#9E4D71] border border-[#F0D0DF] font-bold text-xs transition-all w-full sm:w-auto cursor-pointer"
-            >
-              <Mic className={`w-3.5 h-3.5 ${micTesting ? 'animate-pulse' : ''}`} />
-              <span>{micTesting ? t('testingMicrophoneBtn') : t('testMicrophoneBtn')}</span>
-            </button>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-start space-x-3">
-              <input
-                id="enable-voice-sos-checkbox"
-                type="checkbox"
-                checked={voiceSosEnabled}
-                onChange={(e) => setVoiceSosEnabled(e.target.checked)}
-                className="mt-1 w-4 h-4 rounded text-[#B36D8B] focus:ring-[#C88EA7] border-[#EFE8E1] accent-[#B36D8B]"
-              />
-              <div>
-                <label
-                  htmlFor="enable-voice-sos-checkbox"
-                  className="font-bold text-sm text-[#3A3A3A] cursor-pointer"
-                >
-                  {t('voiceSosToggle')}
-                </label>
-                <p className="text-xs text-[#6B6368] mt-0.5 leading-relaxed">
-                  {language === 'hi' ? 'ब्राउज़र के स्पीच API का उपयोग करके आपके गुप्त आपातकालीन शब्द को निरंतर सुनता है।' : language === 'mr' ? 'ब्राऊझरच्या स्पीच API चा वापर करून गुप्त आपत्कालीन शब्द ऐकतो.' : 'Uses the browser-native Web Speech API to listen continuously for your safety wake phrase.'}
-                </p>
-              </div>
-            </div>
-
-            {voiceSosEnabled && (
-              <div className="pl-7 space-y-3 pt-2 border-t border-[#EFE8E1]">
-                <div>
-                  <label htmlFor="voice-wake-phrase-input" className="block text-xs font-semibold text-[#6B6368] mb-1">
-                    {t('voiceWakePhraseLabel')}
-                  </label>
-                  <input
-                    id="voice-wake-phrase-input"
-                    type="text"
-                    value={voiceSosWakePhrase}
-                    onChange={(e) => setVoiceSosWakePhrase(e.target.value)}
-                    placeholder="e.g. help me, emergency, save me"
-                    className="w-full max-w-sm bg-[#FAF6F3] border border-[#EFE8E1] rounded-xl px-3.5 py-2.5 text-sm font-semibold text-[#3A3A3A] focus:outline-none focus:border-[#C88EA7] focus:bg-white"
-                  />
-                </div>
-
-                <div className="bg-[#FAF6F3] border border-[#EFE8E1] p-3.5 rounded-2xl text-[11px] text-[#6B6368] flex items-start space-x-2">
-                  <Info className="w-4 h-4 text-[#9E4D71] shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold text-[#3A3A3A]">{language === 'hi' ? 'ब्राउज़र सुरक्षा सूचना:' : language === 'mr' ? 'ब्राऊझर सुरक्षा सूचना:' : 'Browser Operating Note:'}</span> {language === 'hi' ? 'सुरक्षा प्रतिबंधों के कारण वॉइस रिकॉग्निशन केवल तभी सक्रिय रहता है जब यह टैब खुला हो।' : language === 'mr' ? 'सुरक्षा नियमांमुळे व्हॉइस रेकग्निशन फक्त हा टॅब उघडा असतानाच कार्य करते.' : 'Due to browser security sandbox constraints, speech recognition only runs while this app tab is open on screen.'}
-                  </div>
-                </div>
-
-                {micResult && (
-                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-900 flex items-center space-x-1.5">
-                    <Check className="w-4 h-4 text-emerald-700 shrink-0" />
-                    <span>{micResult}</span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Section 8: Fall / Impact Detection (DeviceMotionEvent) */}
+        {/* Section 7: Fall / Impact Detection (DeviceMotionEvent) */}
         <div className="bg-white border border-[#EFE8E1] p-6 sm:p-8 rounded-3xl space-y-6 shadow-xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between items-start gap-3.5 border-b border-[#EFE8E1] pb-4">
             <div className="flex items-center space-x-3">
@@ -1194,137 +876,6 @@ export const Settings: React.FC<SettingsProps> = ({
                 : (language === 'hi' ? 'SafeCheck में ऑफलाइन सर्विस वर्कर और पूर्ण स्क्रीन ऐप सपोर्ट शामिल है।' : language === 'mr' ? 'SafeCheck मध्ये ऑफलाइन सर्व्हिस वर्कर आणि पूर्ण स्क्रीन अॅप सपोर्ट समाविष्ट आहे.' : 'SafeCheck includes an offline-first Service Worker, Web App Manifest, and adaptive icons for iOS, Android, and Desktop.')}
             </p>
           </div>
-        </div>
-
-        {/* Section 11: Database Schema & SOS Storage Isolation */}
-        <div className="bg-white border border-[#EFE8E1] p-6 sm:p-8 rounded-3xl space-y-6 shadow-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between items-start gap-3.5 border-b border-[#EFE8E1] pb-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#F9EDF3] text-[#9E4D71] border border-[#F0D0DF] flex items-center justify-center shrink-0">
-                <Database className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-[#3A3A3A] text-base">Independent SOS & Audio Evidence Architecture</h3>
-                <p className="text-xs text-[#6B6368]">
-                  Three distinct top-level Firestore collections with Firebase Storage integration
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              <button
-                id="restore-sos-events-btn"
-                type="button"
-                onClick={handleRestoreSOSEvents}
-                disabled={restoring}
-                className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
-                title="Scan all local/remote records and write them into Firestore trips collection"
-              >
-                <RotateCcw className={`w-3.5 h-3.5 ${restoring ? 'animate-spin' : ''}`} />
-                <span>{restoring ? 'Restoring SOS Events...' : 'Restore SOS Events to Firestore'}</span>
-              </button>
-
-              <button
-                id="seed-sample-sos-btn"
-                type="button"
-                onClick={handleCreateSampleSOSEvent}
-                disabled={seeding}
-                className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#FAF6F3] border border-[#E0D8D0] hover:bg-[#F3ECE6] text-[#3A3A3A] font-bold text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
-                title="Create a verified sample SOS alert in trips to instantly verify visibility in Firebase Console"
-              >
-                <CheckCircle2 className={`w-3.5 h-3.5 text-rose-500 ${seeding ? 'animate-spin' : ''}`} />
-                <span>{seeding ? 'Creating Test SOS...' : 'Seed Sample SOS Document'}</span>
-              </button>
-
-              <button
-                id="run-sos-migration-btn"
-                type="button"
-                onClick={handleRunMigration}
-                disabled={migrating}
-                className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#B36D8B] hover:bg-[#9E5875] text-white font-bold text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
-              >
-                <Database className={`w-3.5 h-3.5 ${migrating ? 'animate-spin' : ''}`} />
-                <span>{migrating ? 'Migrating...' : 'Run Consolidation'}</span>
-              </button>
-            </div>
-          </div>
-
-          {restoreStatus && (
-            <div
-              id="sos-restore-result-box"
-              className={`p-3.5 rounded-2xl border text-xs space-y-1 ${
-                restoreStatus.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'
-              }`}
-            >
-              <div className="flex items-center gap-2 font-bold">
-                {restoreStatus.success ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                ) : (
-                  <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-                )}
-                <span>{restoreStatus.message}</span>
-              </div>
-              {restoreStatus.success && (
-                <div className="text-[11px] text-emerald-800 pl-6">
-                  {restoreStatus.restoredCount} document(s) synchronized. The <strong>trips</strong> collection contains all active and past SOS events.
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs">
-            {/* trips collection */}
-            <div className="p-3.5 rounded-2xl bg-[#FAF6F3] border border-[#EFE8E1] space-y-2">
-              <div className="flex items-center gap-2 font-bold text-[#3A3A3A]">
-                <span className="w-2 h-2 rounded-full bg-blue-500" />
-                <span className="font-mono text-[11px]">trips</span>
-              </div>
-              <p className="text-[#6B6368] text-[11px] leading-relaxed">
-                Unified collection containing <strong>both regular trips and emergency SOS alerts</strong>. Includes <code className="text-[10px] bg-white px-1 py-0.5 rounded">isSosEvent</code>, <code className="text-[10px] bg-white px-1 py-0.5 rounded">sosType</code>, <code className="text-[10px] bg-white px-1 py-0.5 rounded">sosTimestamp</code>, <code className="text-[10px] bg-white px-1 py-0.5 rounded">sosLocation</code>, <code className="text-[10px] bg-white px-1 py-0.5 rounded">sosStatus</code>, and <code className="text-[10px] bg-white px-1 py-0.5 rounded">escalatedTo</code>.
-              </p>
-            </div>
-
-            {/* sos_audio_evidence collection */}
-            <div className="p-3.5 rounded-2xl bg-[#FAF6F3] border border-[#EFE8E1] space-y-2">
-              <div className="flex items-center gap-2 font-bold text-[#3A3A3A]">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span className="font-mono text-[11px]">sos_audio_evidence</span>
-              </div>
-              <p className="text-[#6B6368] text-[11px] leading-relaxed">
-                Independent top-level audio metadata linked directly by <code className="text-[10px] bg-white px-1 py-0.5 rounded">trip_id</code>. Audio files are uploaded to Firebase Storage and streamed securely.
-              </p>
-            </div>
-          </div>
-
-          {migrationResult && (
-            <div
-              id="sos-migration-result-box"
-              className={`p-4 rounded-2xl border text-xs space-y-1.5 ${
-                migrationResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'
-              }`}
-            >
-              <div className="flex items-center gap-2 font-bold">
-                {migrationResult.success ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>SOS Consolidation Completed Successfully</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="w-4 h-4 text-rose-600" />
-                    <span>Consolidation Notice: {migrationResult.message}</span>
-                  </>
-                )}
-              </div>
-              {migrationResult.success && (
-                <div className="flex flex-wrap gap-4 text-[11px] pt-1">
-                  <span>Scanned trips: <strong>{migrationResult.scanned}</strong></span>
-                  <span>Consolidated in trips: <strong>{migrationResult.migratedSosCount}</strong></span>
-                  <span>Audio evidence linked: <strong>{migrationResult.migratedAudioCount}</strong></span>
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Save & Reset Actions */}

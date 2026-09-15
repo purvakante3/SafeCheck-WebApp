@@ -30,7 +30,6 @@ import { notifyTripCheckInReminder, notifySosTriggered } from './services/notifi
 import { LanguageProvider } from './i18n/LanguageContext';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { FallDetectionListener } from './components/FallDetectionListener';
-import { VoiceSosListener } from './components/VoiceSosListener';
 import { isDeviceOnline, syncOfflineTripData } from './services/offlineSyncService';
 
 function AppContent() {
@@ -270,77 +269,6 @@ function AppContent() {
     },
     [user, contacts]
   );
-
-  // Global Hardware / Desktop Shortcut SOS Listener
-  const sosKeyHistoryRef = useRef<number[]>([]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!e) return;
-
-      // 1. Desktop SOS Keyboard Shortcut (e.g. Ctrl+Shift+S, Alt+Shift+S, F8)
-      const shortcutEnabled = appSettings?.desktopSosShortcutEnabled ?? true;
-      const configuredShortcut = appSettings?.desktopSosShortcut || 'Ctrl+Shift+S';
-
-      if (shortcutEnabled) {
-        let isShortcutMatch = false;
-
-        if (configuredShortcut === 'Ctrl+Shift+S') {
-          if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'S' || e.key === 's' || e.code === 'KeyS')) {
-            isShortcutMatch = true;
-          }
-        } else if (configuredShortcut === 'Alt+Shift+S') {
-          if (e.altKey && e.shiftKey && (e.key === 'S' || e.key === 's' || e.code === 'KeyS')) {
-            isShortcutMatch = true;
-          }
-        } else if (configuredShortcut === 'Ctrl+Alt+S') {
-          if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'S' || e.key === 's' || e.code === 'KeyS')) {
-            isShortcutMatch = true;
-          }
-        } else if (configuredShortcut === 'F8') {
-          if (e.key === 'F8' || e.code === 'F8') {
-            isShortcutMatch = true;
-          }
-        }
-
-        if (isShortcutMatch) {
-          e.preventDefault();
-          e.stopPropagation();
-          console.log(`[SafeCheck] Desktop SOS shortcut triggered (${configuredShortcut})`);
-          handleTriggerEmergencySOS(`Desktop Keyboard Shortcut (${configuredShortcut})`);
-          return;
-        }
-      }
-
-      // 2. Hardware Multi-Press Trigger (Volume keys, Media keys, or rapid dedicated presses)
-      const isHardwareSosActive = appSettings?.hardwareSosTriggerEnabled ?? appSettings?.hardwareSosEnabled ?? true;
-      if (isHardwareSosActive) {
-        const targetKeys = ['AudioVolumeUp', 'AudioVolumeDown', 'VolumeUp', 'VolumeDown', 'Power', 'MediaTrackNext', 'MediaTrackPrevious'];
-        const isHardwareKey =
-          (typeof e.code === 'string' && targetKeys.includes(e.code)) ||
-          (typeof e.key === 'string' && targetKeys.includes(e.key));
-
-        if (isHardwareKey) {
-          const requiredCount = appSettings?.hardwarePressCount || 4;
-          const now = Date.now();
-          sosKeyHistoryRef.current.push(now);
-
-          // Keep only presses within the last 2500ms
-          sosKeyHistoryRef.current = sosKeyHistoryRef.current.filter((t) => now - t <= 2500);
-
-          if (sosKeyHistoryRef.current.length >= requiredCount) {
-            sosKeyHistoryRef.current = [];
-            handleTriggerEmergencySOS(`Hardware Multi-Press (${requiredCount}x)`);
-          }
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [appSettings, handleTriggerEmergencySOS]);
 
   const handleNavigate = (page: string) => {
     console.log(`[App] handleNavigate called with page: "${page}" | current page: "${currentPage}" | user:`, user?.email || 'unauthenticated');
@@ -612,15 +540,6 @@ function AppContent() {
         <FallDetectionListener
           settings={appSettings || DEFAULT_SETTINGS}
           onTriggerSOS={() => handleTriggerEmergencySOS('Automated Fall Detection', 'fall_detected')}
-          onUpdateSettings={handleSaveSettings}
-        />
-      )}
-
-      {/* Background Voice SOS Wake-Word Listener */}
-      {user && (
-        <VoiceSosListener
-          settings={appSettings || DEFAULT_SETTINGS}
-          onTriggerSOS={() => handleTriggerEmergencySOS('Voice SOS Wake Word', 'voice_activated')}
           onUpdateSettings={handleSaveSettings}
         />
       )}

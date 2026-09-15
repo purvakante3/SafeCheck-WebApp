@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, CheckCircle2, AlertCircle, ArrowRight, Users, MapPin, PhoneCall, Mic, Sparkles } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertCircle, ArrowRight, Users, MapPin, PhoneCall, Sparkles } from 'lucide-react';
 import { AppSettings, EmergencyContact } from '../types';
 import { useLanguage } from '../i18n/LanguageContext';
 import { getCurrentLocation } from '../services/locationService';
@@ -55,11 +55,10 @@ export const SafetyScoreCard: React.FC<SafetyScoreCardProps> = ({
     }
   };
 
-  // Evaluation criteria (4 checklist items)
+  // Evaluation criteria (3 checklist items)
   const hasContacts = contacts.length > 0;
   const hasLocation = locationPermGranted;
   const hasFakeCaller = Boolean(settings?.fakeCallerName && settings.fakeCallerName.trim().length > 0);
-  const hasVoiceSos = Boolean(settings?.voiceSosEnabled);
 
   const items = [
     {
@@ -94,18 +93,6 @@ export const SafetyScoreCard: React.FC<SafetyScoreCardProps> = ({
         : t('fakeCallDefault'),
       actionLabel: 'Configure',
       icon: PhoneCall,
-      onClick: () => onNavigate('settings'),
-    },
-    {
-      id: 'voiceSos',
-      label: t('voiceSosLabel'),
-      desc: t('voiceSosDesc'),
-      isComplete: hasVoiceSos,
-      statusText: hasVoiceSos
-        ? t('voiceSosEnabled', { phrase: settings?.voiceWakePhrase || 'help me' })
-        : t('voiceSosDisabled'),
-      actionLabel: 'Enable Voice SOS',
-      icon: Mic,
       onClick: () => onNavigate('settings'),
     },
   ];
