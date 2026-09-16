@@ -1774,10 +1774,12 @@ async function startServer() {
       }
 
       const recAt = recordedAt || new Date().toISOString();
+      const detectedMime = mimeType || (typeof audioDataUrl === 'string' && audioDataUrl.startsWith('data:') ? audioDataUrl.slice(5, audioDataUrl.indexOf(';')) : 'audio/webm') || 'audio/webm';
+      const m = detectedMime.toLowerCase();
+      const ext = m.includes('wav') ? 'wav' : m.includes('ogg') ? 'ogg' : (m.includes('mp4') || m.includes('m4a') || m.includes('aac')) ? 'm4a' : (m.includes('mp3') || m.includes('mpeg')) ? 'mp3' : 'webm';
       const cleanTs = recAt.replace(/[:.]/g, '-');
-      const resolvedStoragePath = storagePath || `/sos_audio/${effectiveUserId || 'anon'}/${targetTripId}/${cleanTs}.webm`;
+      const resolvedStoragePath = storagePath || `/sos_audio/${effectiveUserId || 'anon'}/${targetTripId}/${cleanTs}.${ext}`;
       const audioId = `audio_${targetTripId}_${Date.now()}`;
-      const detectedMime = mimeType || 'audio/webm';
       
       let fileSizeBytes = 1024 * 16;
       let audioBuffer: Buffer | null = null;

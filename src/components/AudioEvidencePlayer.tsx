@@ -43,6 +43,16 @@ export const AudioEvidencePlayer: React.FC<AudioEvidencePlayerProps> = ({
     second: '2-digit',
   });
 
+  const getExtension = (mime?: string, url?: string): string => {
+    const raw = (mime || (url?.startsWith('data:') ? url.slice(5, url.indexOf(';')) : '') || '').toLowerCase();
+    if (raw.includes('wav')) return 'wav';
+    if (raw.includes('ogg')) return 'ogg';
+    if (raw.includes('mp4') || raw.includes('m4a') || raw.includes('aac')) return 'm4a';
+    if (raw.includes('mp3') || raw.includes('mpeg')) return 'mp3';
+    return 'webm';
+  };
+  const downloadExt = getExtension(evidence.mimeType, evidence.audioDataUrl);
+
   return (
     <div
       id="audio-evidence-player"
@@ -68,7 +78,7 @@ export const AudioEvidencePlayer: React.FC<AudioEvidencePlayerProps> = ({
 
         <a
           href={evidence.audioDataUrl}
-          download={`SafeCheck_Evidence_${new Date(evidence.recordedAt).getTime()}.webm`}
+          download={`SafeCheck_Evidence_${new Date(evidence.recordedAt).getTime()}.${downloadExt}`}
           className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs transition flex items-center space-x-1"
           title="Download Audio Evidence"
         >

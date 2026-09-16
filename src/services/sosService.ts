@@ -27,7 +27,7 @@ import { getCachedContacts, getUserContacts } from './contactService';
 import { notifySosTriggered } from './notificationService';
 import { isDeviceOnline, buildEmergencySmsMessage, triggerNativeSms } from './offlineSyncService';
 import { ensureAuthStateReady } from './authService';
-import { freezeAudioSnapshot, getLatestAudioSnapshot, captureMicrophoneAudioEvidence, startSosEvidenceRecording } from './audioSnapshotService';
+import { freezeAudioSnapshot, getLatestAudioSnapshot, captureMicrophoneAudioEvidence, startSosEvidenceRecording, getAudioExtension } from './audioSnapshotService';
 import { getCurrentLocation } from './locationService';
 
 // Helpers to handle data URLs & Blobs
@@ -63,36 +63,40 @@ export async function uploadAndLogAudioEvidence(params: {
   const targetTripId = params.tripId || params.sosId || `trip_${Date.now()}`;
   const { userId, audioBlobOrDataUrl, durationSeconds = 12 } = params;
   const recordedAt = params.recordedAt || new Date().toISOString();
-  
-  // Format timestamp for storage filename (ISO sanitized)
-  const cleanTimestamp = recordedAt.replace(/[:.]/g, '-');
-  const storagePath = `/sos_audio/${userId}/${targetTripId}/${cleanTimestamp}.webm`;
-  const storageRefPath = `sos_audio/${userId}/${targetTripId}/${cleanTimestamp}.webm`;
-  
+
   let audioBlob: Blob;
-  let detectedMime = params.mimeType || 'audio/webm';
+  let detectedMime = params.mimeType || '';
   let fileSizeBytes = 0;
 
   if (typeof audioBlobOrDataUrl === 'string') {
     if (audioBlobOrDataUrl.startsWith('data:')) {
       const converted = dataUrlToBlob(audioBlobOrDataUrl);
       audioBlob = converted.blob;
-      detectedMime = converted.mimeType;
+      detectedMime = detectedMime || converted.mimeType || 'audio/webm';
       fileSizeBytes = audioBlob.size;
     } else {
-      // It's already a URL or string pointer
-      audioBlob = new Blob([], { type: detectedMime });
+      audioBlob = new Blob([], { type: detectedMime || 'audio/webm' });
     }
   } else {
     audioBlob = audioBlobOrDataUrl;
-    detectedMime = audioBlob.type || detectedMime;
+    detectedMime = audioBlob.type || detectedMime || 'audio/webm';
     fileSizeBytes = audioBlob.size;
   }
+
+  if (!detectedMime) {
+    detectedMime = 'audio/webm';
+  }
+
+  // Format timestamp and accurate extension for storage filename
+  const cleanTimestamp = recordedAt.replace(/[:.]/g, '-');
+  const ext = getAudioExtension(detectedMime);
+  const storagePath = `/sos_audio/${userId}/${targetTripId}/${cleanTimestamp}.${ext}`;
+  const storageRefPath = `sos_audio/${userId}/${targetTripId}/${cleanTimestamp}.${ext}`;
 
   let downloadUrl = '';
   let serverAudioId = '';
 
-  console.log(`[SafeCheck Audio Proxy] Initiating audio evidence upload for trip "${targetTripId}" (duration: ${durationSeconds}s, mime: ${detectedMime})...`);
+  console.log(`[SafeCheck Audio Proxy] Initiating audio evidence upload for trip "${targetTripId}" (duration: ${durationSeconds}s, mime: ${detectedMime}, ext: .${ext})...`);
 
   // 1. PRIMARY: Route audio upload through the server-side proxy endpoint (/api/sos/upload-audio)
   // Server-side uploads are completely exempt from browser CORS restrictions.

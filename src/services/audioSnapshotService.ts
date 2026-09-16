@@ -1,9 +1,10 @@
 /**
  * Audio Evidence Snapshotting Service using browser MediaRecorder API
- * Records rolling 10-15 second audio clips during an active trip.
- * Automatically deletes and overwrites older clips (keeping only 1 recent clip in memory).
- * When trip ends safely, all clips are destroyed.
- * When SOS is triggered, the latest clip is locked as forensic evidence.
+ * Records rolling 12-second audio clips during an active trip.
+ * Automatically overwrites older clips (keeping only 1 recent clip in memory).
+ * When trip ends safely, all clips and hardware streams are destroyed.
+ * When SOS is triggered, genuine ambient microphone audio is locked as forensic evidence.
+ * NEVER uses synthetic tones, mock audio generators, or fake WAV fallbacks.
  */
 
 import { AudioEvidence } from '../types';
@@ -15,6 +16,14 @@ let latestAudioSnapshot: AudioEvidence | null = null;
 let rollingTimerId: any = null;
 
 const ROLLING_CLIP_SECONDS = 12;
+export const DEFAULT_SOS_AUDIO_DURATION_SECONDS = 120; // 120 seconds (2 minutes)
+
+// Persistent module-level state for dedicated SOS emergency recording
+let activeSosRecorder: MediaRecorder | null = null;
+let activeSosStream: MediaStream | null = null;
+let activeSosTripId: string | null = null;
+let activeSosTimerId: any = null;
+let isSosRecordingStarting = false;
 
 export function isAudioSnapshotSupported(): boolean {
   return (
@@ -25,13 +34,17 @@ export function isAudioSnapshotSupported(): boolean {
   );
 }
 
-function getSupportedMimeType(): string {
+/**
+ * Returns the best audio MIME type supported natively by the browser.
+ */
+export function getSupportedMimeType(): string {
   if (typeof MediaRecorder === 'undefined') return 'audio/webm';
   const types = [
     'audio/webm;codecs=opus',
     'audio/webm',
     'audio/mp4',
     'audio/ogg;codecs=opus',
+    'audio/ogg',
     'audio/aac',
   ];
   for (const t of types) {
@@ -43,7 +56,42 @@ function getSupportedMimeType(): string {
 }
 
 /**
+ * Resolves standard file extension based on MIME type.
+ */
+export function getAudioExtension(mimeType: string = ''): string {
+  const m = mimeType.toLowerCase();
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('ogg')) return 'ogg';
+  if (m.includes('mp4') || m.includes('m4a') || m.includes('aac')) return 'm4a';
+  if (m.includes('mp3') || m.includes('mpeg')) return 'mp3';
+  return 'webm';
+}
+
+/**
+ * Requests microphone stream with fallback to simple constraints if advanced constraints fail.
+ */
+export async function requestMicrophoneStream(): Promise<MediaStream> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('Microphone access (navigator.mediaDevices.getUserMedia) is not supported in this browser environment.');
+  }
+
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch (err: any) {
+    console.warn('[SafeCheck Audio] Advanced audio constraints rejected, falling back to audio: true...', err?.message || err);
+    return await navigator.mediaDevices.getUserMedia({ audio: true });
+  }
+}
+
+/**
  * Starts continuous rolling audio clip recording for an active trip.
+ * Uses real microphone capture with 1000ms timeslices.
  */
 export async function startRollingAudioRecorder(
   tripId: string,
@@ -58,16 +106,12 @@ export async function startRollingAudioRecorder(
   currentTripId = tripId;
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    console.log(`[SafeCheck Audio Rolling] Requesting microphone stream for trip "${tripId}"...`);
+    const stream = await requestMicrophoneStream();
     currentStream = stream;
 
     const mimeType = getSupportedMimeType();
+    console.log(`[SafeCheck Audio Rolling] Stream acquired! Initializing rolling slices with MIME "${mimeType}"...`);
 
     function recordClipSlice() {
       if (!currentStream || !currentStream.active) return;
@@ -86,10 +130,7 @@ export async function startRollingAudioRecorder(
         recorder.onstop = () => {
           if (chunks.length > 0) {
             const blob = new Blob(chunks, { type: mimeType });
-            const durationSec = Math.min(
-              ROLLING_CLIP_SECONDS,
-              Math.round((Date.now() - startTime) / 1000)
-            );
+            const durationSec = Math.max(1, Math.round((Date.now() - startTime) / 1000));
 
             const reader = new FileReader();
             reader.onloadend = () => {
@@ -98,13 +139,13 @@ export async function startRollingAudioRecorder(
               latestAudioSnapshot = {
                 audioDataUrl: dataUrl,
                 recordedAt: new Date().toISOString(),
-                durationSeconds: durationSec || ROLLING_CLIP_SECONDS,
+                durationSeconds: durationSec,
                 mimeType,
               };
 
               try {
                 sessionStorage.setItem(
-                  `safecheck_latest_audio_snapshot`,
+                  'safecheck_latest_audio_snapshot',
                   JSON.stringify(latestAudioSnapshot)
                 );
               } catch (e) {}
@@ -116,38 +157,37 @@ export async function startRollingAudioRecorder(
             reader.readAsDataURL(blob);
           }
 
-          // Restart next clip if stream is still active
+          // Restart next clip slice if stream is still active and trip is ongoing
           if (currentStream && currentStream.active) {
             rollingTimerId = setTimeout(recordClipSlice, 200);
           }
         };
 
         mediaRecorder = recorder;
-        recorder.start();
+        // Timeslice of 1000ms ensures chunks accumulate progressively
+        recorder.start(1000);
 
-        // Stop recorder after ROLLING_CLIP_SECONDS to seal the slice and overwrite
+        // Stop recorder after ROLLING_CLIP_SECONDS to seal the slice and cycle to the next
         setTimeout(() => {
           if (recorder.state === 'recording') {
             try {
-              console.log(`[SafeCheck Audio Rolling] ⏱️ Rolling slice duration (${ROLLING_CLIP_SECONDS}s) reached at ${new Date().toISOString()}. Stopping recorder to seal slice...`);
-              console.log(new Error('[SafeCheck Audio Rolling Slice Stop Stack]').stack);
               recorder.stop();
             } catch (e) {}
           }
         }, ROLLING_CLIP_SECONDS * 1000);
       } catch (err) {
-        console.warn('Error during audio slice recording:', err);
+        console.warn('[SafeCheck Audio Rolling] Error during audio slice recording:', err);
       }
     }
 
     recordClipSlice();
     return { success: true };
   } catch (err: any) {
-    console.error('Audio recorder initialization failed:', err);
+    console.error('[SafeCheck Audio Rolling] Recorder initialization failed:', err);
     return {
       success: false,
       error:
-        err.name === 'NotAllowedError'
+        err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
           ? 'Microphone permission denied for Audio Snapshotting.'
           : err.message || 'Microphone capture error.',
     };
@@ -155,73 +195,10 @@ export async function startRollingAudioRecorder(
 }
 
 /**
- * Generates a valid WAV audio data URL containing an emergency forensic tone.
- * Used when microphone is unavailable, denied, or in automated test environments.
- */
-export function createForensicAudioDataUrl(durationSeconds: number = 2): string {
-  const sampleRate = 8000;
-  const numChannels = 1;
-  const numSamples = sampleRate * durationSeconds;
-  const buffer = new ArrayBuffer(44 + numSamples);
-  const view = new DataView(buffer);
-
-  // Write ASCII string helper
-  function writeString(offset: number, string: string) {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
-    }
-  }
-
-  // RIFF Chunk Descriptor
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + numSamples, true);
-  writeString(8, 'WAVE');
-
-  // fmt sub-chunk
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
-  view.setUint16(20, 1, true); // AudioFormat (1 for PCM)
-  view.setUint16(22, numChannels, true); // NumChannels
-  view.setUint32(24, sampleRate, true); // SampleRate
-  view.setUint32(28, sampleRate * numChannels, true); // ByteRate
-  view.setUint16(32, numChannels, true); // BlockAlign
-  view.setUint16(34, 8, true); // BitsPerSample
-
-  // data sub-chunk
-  writeString(36, 'data');
-  view.setUint32(40, numSamples, true);
-
-  // Fill audio samples with subtle emergency beacon tone (440Hz / 880Hz alternating)
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    const freq = (t % 0.4 < 0.2) ? 880 : 440;
-    const val = Math.floor(128 + 45 * Math.sin(2 * Math.PI * freq * t));
-    view.setUint8(44 + i, val);
-  }
-
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return 'data:audio/wav;base64,' + (typeof btoa !== 'undefined' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64'));
-}
-
-export const DEFAULT_SOS_AUDIO_DURATION_SECONDS = 120; // 120 seconds (2 minutes)
-
-// Persistent module-level state for dedicated SOS emergency recording
-let activeSosRecorder: MediaRecorder | null = null;
-let activeSosStream: MediaStream | null = null;
-let activeSosTripId: string | null = null;
-let activeSosTimerId: any = null;
-let isSosRecordingStarting = false;
-
-/**
  * Starts a persistent SOS emergency audio recording session that lives at the
  * module service level and continues for its full intended duration (120s / 2 minutes)
  * independently of UI re-renders, component unmounts, or route navigation.
- * Collects ALL chunks via timeslice (1000ms) before assembling the final Blob and uploading.
+ * Captures real microphone audio into MediaRecorder and uploads genuine audio Blob.
  */
 export async function startSosEvidenceRecording(
   tripId: string,
@@ -231,7 +208,7 @@ export async function startSosEvidenceRecording(
 ): Promise<{ success: boolean; error?: string }> {
   const callTimestamp = new Date().toISOString();
   console.log(`[SafeCheck Audio SOS] 🎙️ startSosEvidenceRecording() invoked at ${callTimestamp}`);
-  console.log(`[SafeCheck Audio SOS] Target Trip ID: "${tripId}", User: "${userId}", Target Duration: ${durationSeconds}s (120000ms)`);
+  console.log(`[SafeCheck Audio SOS] Target Trip ID: "${tripId}", User: "${userId}", Target Duration: ${durationSeconds}s`);
 
   if (!isAudioSnapshotSupported()) {
     const errorMsg = 'MediaRecorder or getUserMedia is not supported in this browser environment.';
@@ -239,27 +216,23 @@ export async function startSosEvidenceRecording(
     return { success: false, error: errorMsg };
   }
 
-  // If already recording for this trip or another trip, PRESERVE IT for the full duration!
-  // Do NOT interrupt or stop the ongoing 120-second recording session.
+  // If already recording, PRESERVE IT for the full duration
   if (activeSosRecorder && activeSosRecorder.state === 'recording') {
-    console.log(`[SafeCheck Audio SOS] 🔒 SOS recording already actively recording (trip: "${activeSosTripId}", state: "${activeSosRecorder.state}"). Preserving ongoing 120s recording session. Duplicate trigger ignored.`);
+    console.log(`[SafeCheck Audio SOS] 🔒 SOS recording already actively recording (trip: "${activeSosTripId}", state: "${activeSosRecorder.state}"). Preserving ongoing recording.`);
     return { success: true };
   }
 
-  // If currently requesting getUserMedia, avoid duplicate concurrent request
   if (isSosRecordingStarting) {
-    console.log(`[SafeCheck Audio SOS] 🔒 SOS recording is already currently initializing getUserMedia. Duplicate trigger ignored.`);
+    console.log('[SafeCheck Audio SOS] 🔒 SOS recording is already currently initializing getUserMedia. Duplicate trigger ignored.');
     return { success: true };
   }
 
   isSosRecordingStarting = true;
 
-  // If a previous recorder was left in another non-recording state, clean up
+  // Clean up any prior non-recording SOS recorder
   if (activeSosRecorder) {
     try {
       if (activeSosRecorder.state === 'recording') {
-        console.log(`[SafeCheck Audio SOS] 🛑 Stopping prior recorder in state "${activeSosRecorder.state}" before fresh start.`);
-        console.log(new Error('[SafeCheck Audio SOS Prior Recorder Stop Stack]').stack);
         activeSosRecorder.stop();
       }
     } catch {}
@@ -276,27 +249,29 @@ export async function startSosEvidenceRecording(
     activeSosTimerId = null;
   }
 
-  // 1. Check microphone permission
-  if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+  // Stop rolling recorder so it doesn't conflict with dedicated emergency recording
+  if (mediaRecorder) {
     try {
-      const permStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-      console.log(`[SafeCheck Audio SOS] 🔍 Microphone permission query status: "${permStatus.state}"`);
-    } catch {
-      console.log('[SafeCheck Audio SOS] Permissions API query for microphone not supported, prompting via getUserMedia directly.');
-    }
+      if (mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+    } catch {}
+    mediaRecorder = null;
+    clearTimeout(rollingTimerId);
+    rollingTimerId = null;
   }
 
   let stream: MediaStream;
   try {
-    console.log(`[SafeCheck Audio SOS] 🔒 Requesting microphone permission from user via getUserMedia...`);
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    console.log(`[SafeCheck Audio SOS] ✅ Microphone permission GRANTED at ${new Date().toISOString()}! Active tracks: ${stream.getAudioTracks().length} (${stream.getAudioTracks().map((t) => t.label || 'AudioTrack').join(', ')})`);
+    console.log('[SafeCheck Audio SOS] 🎙️ Requesting live microphone access from user via getUserMedia...');
+    // If currentStream from rolling recorder is still live and active, reuse it
+    if (currentStream && currentStream.active && currentStream.getAudioTracks().some((t) => t.readyState === 'live')) {
+      stream = currentStream;
+      console.log('[SafeCheck Audio SOS] ♻️ Reusing existing active audio stream from rolling trip recorder.');
+    } else {
+      stream = await requestMicrophoneStream();
+      console.log(`[SafeCheck Audio SOS] ✅ Live microphone access GRANTED! Active tracks: ${stream.getAudioTracks().length} (${stream.getAudioTracks().map((t) => t.label || 'Mic').join(', ')})`);
+    }
   } catch (micErr: any) {
     isSosRecordingStarting = false;
     const errMsg = micErr?.name === 'NotAllowedError' || micErr?.name === 'PermissionDeniedError'
@@ -307,20 +282,6 @@ export async function startSosEvidenceRecording(
   } finally {
     isSosRecordingStarting = false;
   }
-
-  // Add listeners to tracks to detect any unexpected track drops
-  stream.getAudioTracks().forEach((track, idx) => {
-    track.onended = () => {
-      console.warn(`[SafeCheck Audio SOS] ⚠️ Audio track #${idx} ("${track.label}") ended unexpectedly at ${new Date().toISOString()}! ReadyState: "${track.readyState}"`);
-      console.warn(new Error('[SafeCheck Audio SOS Track onended Stack]').stack);
-    };
-    track.onmute = () => {
-      console.warn(`[SafeCheck Audio SOS] ⚠️ Audio track #${idx} ("${track.label}") was MUTED at ${new Date().toISOString()}`);
-    };
-    track.onunmute = () => {
-      console.log(`[SafeCheck Audio SOS] 🔊 Audio track #${idx} ("${track.label}") was UNMUTED at ${new Date().toISOString()}`);
-    };
-  });
 
   activeSosStream = stream;
   activeSosTripId = tripId;
@@ -337,40 +298,33 @@ export async function startSosEvidenceRecording(
     const startTimeIso = new Date(startTime).toISOString();
 
     recorder.onerror = (errEvent: any) => {
-      console.error(`[SafeCheck Audio SOS] ❌ MediaRecorder.onerror event:`, errEvent?.error || errEvent);
-      console.error(new Error('[SafeCheck Audio SOS MediaRecorder Error Stack]').stack);
+      console.error('[SafeCheck Audio SOS] ❌ MediaRecorder.onerror event:', errEvent?.error || errEvent);
     };
 
-    // Centralized, logged stop helper to trace every stop() call
     const safeStopRecorder = (reason: string) => {
-      const nowIso = new Date().toISOString();
-      console.log(`[SafeCheck Audio SOS] 🛑 MediaRecorder.stop() called! Reason: "${reason}", Current State: "${recorder.state}", Timestamp: ${nowIso}`);
-      console.log(new Error(`[SafeCheck Audio SOS Stop Call Stack: "${reason}"]`).stack);
+      console.log(`[SafeCheck Audio SOS] 🛑 MediaRecorder.stop() called! Reason: "${reason}", State: "${recorder.state}"`);
       if (recorder.state === 'recording') {
         try {
           recorder.stop();
         } catch (e: any) {
-          console.warn(`[SafeCheck Audio SOS] Warning in recorder.stop():`, e?.message || e);
+          console.warn('[SafeCheck Audio SOS] Warning in recorder.stop():', e?.message || e);
         }
-      } else {
-        console.log(`[SafeCheck Audio SOS] Recorder is not in "recording" state (state="${recorder.state}"). Skipping stop.`);
       }
     };
 
-    // Collect ALL chunks into the array as they become available
+    // Collect chunks as they arrive
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
         chunks.push(e.data);
         const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-        console.log(`[SafeCheck Audio SOS] 📦 Captured chunk #${chunks.length} (${e.data.size} bytes, total chunks: ${chunks.length}, elapsed: ${elapsedSec}s) at ${new Date().toISOString()}`);
         if (onProgress) onProgress(elapsedSec);
       }
     };
 
     recorder.onstop = async () => {
       const stopTime = Date.now();
-      const actualDuration = Math.max(0, (stopTime - startTime) / 1000);
-      console.log(`[SafeCheck Audio SOS] 🛑 MediaRecorder.onstop event fired at ${new Date(stopTime).toISOString()}. Recording start: ${startTimeIso}, stop: ${new Date(stopTime).toISOString()}, exact duration: ${actualDuration.toFixed(2)}s, total chunks collected: ${chunks.length}`);
+      const actualDuration = Math.max(1, Math.round((stopTime - startTime) / 1000));
+      console.log(`[SafeCheck Audio SOS] 🛑 MediaRecorder.onstop fired at ${new Date(stopTime).toISOString()}. Recording duration: ${actualDuration}s, total chunks collected: ${chunks.length}`);
 
       // Release microphone hardware
       try {
@@ -385,13 +339,13 @@ export async function startSosEvidenceRecording(
       }
 
       if (chunks.length === 0) {
-        console.warn('[SafeCheck Audio SOS] ⚠️ No audio chunks were collected before recorder stopped.');
+        console.warn('[SafeCheck Audio SOS] ⚠️ No audio chunks collected before recorder stopped.');
         return;
       }
 
-      // Assemble final Blob from ALL collected chunks
+      // Assemble final Blob from ALL collected chunks with genuine MIME type
       const finalBlob = new Blob(chunks, { type: mimeType });
-      console.log(`[SafeCheck Audio SOS] 🎵 Final recorded audio Blob before upload: Size=${finalBlob.size} bytes (${(finalBlob.size / 1024).toFixed(1)} KB), Duration=${actualDuration.toFixed(2)}s, MIME="${finalBlob.type}", Total Chunks=${chunks.length}`);
+      console.log(`[SafeCheck Audio SOS] 🎵 Final recorded ambient audio Blob: Size=${finalBlob.size} bytes (${(finalBlob.size / 1024).toFixed(1)} KB), Duration=${actualDuration}s, MIME="${finalBlob.type}"`);
 
       // Read as Data URL to update in-memory snapshot immediately
       const reader = new FileReader();
@@ -403,7 +357,7 @@ export async function startSosEvidenceRecording(
           userId,
           audioDataUrl: dataUrl,
           recordedAt: startTimeIso,
-          durationSeconds: Math.round(actualDuration),
+          durationSeconds: actualDuration,
           mimeType,
         };
         latestAudioSnapshot = evidence;
@@ -413,7 +367,7 @@ export async function startSosEvidenceRecording(
 
         // Dynamically import uploadAndLogAudioEvidence to avoid circular dependency
         try {
-          console.log(`[SafeCheck Audio SOS] 🚀 Triggering upload of final audio evidence Blob (${finalBlob.size} bytes, ${actualDuration.toFixed(2)}s) to Firebase Storage & sos_audio_evidence for trip: "${tripId}"...`);
+          console.log(`[SafeCheck Audio SOS] 🚀 Uploading final genuine audio evidence Blob (${finalBlob.size} bytes, ${actualDuration}s, mime: ${mimeType}) for trip "${tripId}"...`);
           const { uploadAndLogAudioEvidence } = await import('./sosService');
           await uploadAndLogAudioEvidence({
             tripId,
@@ -421,10 +375,10 @@ export async function startSosEvidenceRecording(
             userId,
             audioBlobOrDataUrl: finalBlob,
             recordedAt: startTimeIso,
-            durationSeconds: Math.round(actualDuration),
+            durationSeconds: actualDuration,
             mimeType,
           });
-          console.log(`[SafeCheck Audio SOS] ✅ Successfully completed upload & metadata persistence for trip: "${tripId}" (Duration: ${actualDuration.toFixed(2)}s)`);
+          console.log(`[SafeCheck Audio SOS] ✅ Successfully completed upload & metadata persistence for trip: "${tripId}"`);
         } catch (uploadErr) {
           console.error('[SafeCheck Audio SOS] ❌ Error in background upload of final audio evidence:', uploadErr);
         }
@@ -432,15 +386,13 @@ export async function startSosEvidenceRecording(
       reader.readAsDataURL(finalBlob);
     };
 
-    // Start recorder with 1-second timeslice so chunks are generated continuously across full duration
+    // Start recorder with 1-second timeslice so chunks generate continuously
     recorder.start(1000);
-    console.log(`[SafeCheck Audio SOS] ▶️ Exact recording start timestamp: ${startTimeIso} (${startTime}). MediaRecorder.start(1000) called with timeslice=1000ms. Intended duration: ${durationSeconds}s (120000ms).`);
+    console.log(`[SafeCheck Audio SOS] ▶️ Live ambient recording started at ${startTimeIso} (intended duration: ${durationSeconds}s)`);
 
-    // Set up a reliable 120-second timer (setTimeout(() => mediaRecorder.stop(), 120000))
-    // that starts exactly when recording starts, and make sure nothing else clears this timeout or stops recorder early.
     const targetTimeoutMs = (durationSeconds || 120) * 1000;
     activeSosTimerId = setTimeout(() => {
-      safeStopRecorder(`120-second intended duration timer elapsed (${targetTimeoutMs}ms)`);
+      safeStopRecorder(`Intended duration timer elapsed (${targetTimeoutMs}ms)`);
     }, targetTimeoutMs);
 
     return { success: true };
@@ -456,7 +408,6 @@ export async function startSosEvidenceRecording(
  */
 export function stopSosAudioRecording(reason: string = 'Explicit call to stopSosAudioRecording'): void {
   console.log(`[SafeCheck Audio SOS] 🛑 stopSosAudioRecording() invoked - Reason: "${reason}" at ${new Date().toISOString()}`);
-  console.log(new Error(`[SafeCheck Audio SOS Stop Stack Trace: "${reason}"]`).stack);
   if (activeSosRecorder && activeSosRecorder.state === 'recording') {
     try {
       activeSosRecorder.stop();
@@ -472,141 +423,83 @@ export function isSosRecordingActive(): boolean {
 }
 
 /**
- * Captures live microphone audio evidence on demand (e.g. upon SOS press).
- * If microphone is available, prompts for permission and records ambient audio.
- * Defaults to 30 seconds for forensic evidence, or can be configured.
- * Uses timeslice (1000ms) to ensure ALL chunks are collected.
+ * Captures live microphone audio evidence on demand.
+ * Prompts for permission and records real ambient audio.
+ * NEVER returns synthetic tones or fake WAV fallbacks.
  */
-export async function captureMicrophoneAudioEvidence(durationSeconds: number = DEFAULT_SOS_AUDIO_DURATION_SECONDS): Promise<AudioEvidence> {
-  console.log(`[SafeCheck Audio] Starting microphone capture attempt (target duration: ${durationSeconds}s) at ${new Date().toISOString()}...`);
+export async function captureMicrophoneAudioEvidence(
+  durationSeconds: number = DEFAULT_SOS_AUDIO_DURATION_SECONDS
+): Promise<AudioEvidence> {
+  console.log(`[SafeCheck Audio] Starting live microphone capture attempt (target duration: ${durationSeconds}s) at ${new Date().toISOString()}...`);
 
-  const supported = isAudioSnapshotSupported();
-  console.log(`[SafeCheck Audio] Browser environment support: MediaRecorder=${typeof MediaRecorder !== 'undefined'}, getUserMedia=${Boolean(typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia)}`);
-
-  if (supported) {
-    // 1. Inspect existing permission state if browser Permissions API is available
-    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
-      try {
-        const permStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-        console.log(`[SafeCheck Audio] Current microphone permission status: "${permStatus.state}" (granted | prompt | denied)`);
-      } catch {
-        console.log('[SafeCheck Audio] Permissions API query for microphone not supported, prompting directly via getUserMedia...');
-      }
-    }
-
-    try {
-      console.log('[SafeCheck Audio] Explicitly requesting live microphone access from browser via navigator.mediaDevices.getUserMedia({ audio: true })...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
-      const audioTracks = stream.getAudioTracks();
-      console.log(`[SafeCheck Audio] Microphone permission GRANTED! Active audio tracks: ${audioTracks.length} (${audioTracks.map((t) => t.label || 'AudioTrack').join(', ')})`);
-
-      const mimeType = getSupportedMimeType();
-      console.log(`[SafeCheck Audio] Initializing MediaRecorder with MIME type: "${mimeType}"...`);
-      const recorder = new MediaRecorder(stream, { mimeType });
-      const chunks: BlobPart[] = [];
-      const startTime = Date.now();
-
-      const recordPromise = new Promise<AudioEvidence>((resolve) => {
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            chunks.push(e.data);
-            console.log(`[SafeCheck Audio] Collected chunk #${chunks.length} (${e.data.size} bytes) at ${new Date().toISOString()}`);
-          }
-        };
-
-        recorder.onstop = () => {
-          const stopTime = Date.now();
-          const actualDuration = Math.max(1, Math.round((stopTime - startTime) / 1000));
-          console.log(`[SafeCheck Audio] MediaRecorder stopped at ${new Date(stopTime).toISOString()}. Total chunks collected: ${chunks.length}, duration: ${actualDuration}s`);
-          try {
-            stream.getTracks().forEach((track) => track.stop());
-          } catch (e) {}
-
-          const blob = new Blob(chunks, { type: mimeType });
-          console.log(`[SafeCheck Audio] Assembled final audio Blob: ${blob.size} bytes, MIME: ${blob.type} from ${chunks.length} chunks`);
-
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = (reader.result as string) || '';
-            const evidence: AudioEvidence = {
-              audioDataUrl: dataUrl,
-              recordedAt: new Date(startTime).toISOString(),
-              durationSeconds: actualDuration,
-              mimeType,
-            };
-            latestAudioSnapshot = evidence;
-            try {
-              sessionStorage.setItem('safecheck_latest_audio_snapshot', JSON.stringify(evidence));
-            } catch (e) {}
-            console.log(`[SafeCheck Audio] Microphone audio evidence successfully captured and encoded (${dataUrl.length} chars)`);
-            resolve(evidence);
-          };
-          reader.readAsDataURL(blob);
-        };
-      });
-
-      // Start recording with 1000ms timeslice to collect ALL chunks
-      recorder.start(1000);
-      console.log(`[SafeCheck Audio] Live ambient recording started at ${new Date().toISOString()} for intended duration of ${durationSeconds} seconds...`);
-
-      const timerId = setTimeout(() => {
-        if (recorder.state === 'recording') {
-          try {
-            console.log(`[SafeCheck Audio Capture] ⏱️ Intended timer reached (${durationSeconds}s), stopping MediaRecorder at ${new Date().toISOString()}...`);
-            console.log(new Error('[SafeCheck Audio Capture Intended Timer Stop Stack]').stack);
-            recorder.stop();
-          } catch (e) {}
-        }
-      }, durationSeconds * 1000);
-
-      const captured = await Promise.race([
-        recordPromise,
-        new Promise<AudioEvidence>((_, reject) =>
-          setTimeout(() => {
-            try {
-              if (recorder.state === 'recording') {
-                console.log(`[SafeCheck Audio Capture] ⏱️ Timeout (${durationSeconds + 2.5}s), stopping MediaRecorder at ${new Date().toISOString()}...`);
-                console.log(new Error('[SafeCheck Audio Capture Timeout Stop Stack]').stack);
-                recorder.stop();
-              }
-              stream.getTracks().forEach((track) => track.stop());
-            } catch (e) {}
-            clearTimeout(timerId);
-            reject(new Error('Audio capture timeout'));
-          }, (durationSeconds + 2.5) * 1000)
-        ),
-      ]);
-
-      return captured;
-    } catch (micErr: any) {
-      console.warn(`[SafeCheck Audio] Live microphone access denied or unavailable (${micErr?.name || 'Error'}: ${micErr?.message || micErr}). Activating emergency forensic audio evidence.`);
-    }
-  } else {
-    console.warn('[SafeCheck Audio] Browser environment does not provide MediaRecorder or getUserMedia. Generating emergency forensic audio evidence.');
+  if (!isAudioSnapshotSupported()) {
+    throw new Error('Microphone audio recording is not supported in this browser environment.');
   }
 
-  // Fallback: Generate forensic audio evidence
-  console.log(`[SafeCheck Audio] Generating emergency forensic audio evidence tone (${durationSeconds}s WAV)...`);
-  const fallbackUrl = createForensicAudioDataUrl(durationSeconds);
-  const fallbackEvidence: AudioEvidence = {
-    audioDataUrl: fallbackUrl,
-    recordedAt: new Date().toISOString(),
-    durationSeconds,
-    mimeType: 'audio/wav',
-  };
-  latestAudioSnapshot = fallbackEvidence;
-  try {
-    sessionStorage.setItem('safecheck_latest_audio_snapshot', JSON.stringify(fallbackEvidence));
-  } catch (e) {}
-  console.log(`[SafeCheck Audio] Emergency forensic audio evidence ready (${fallbackEvidence.durationSeconds}s, ${fallbackEvidence.mimeType})`);
-  return fallbackEvidence;
+  const stream = await requestMicrophoneStream();
+  const audioTracks = stream.getAudioTracks();
+  console.log(`[SafeCheck Audio] Microphone permission GRANTED! Active audio tracks: ${audioTracks.length} (${audioTracks.map((t) => t.label || 'AudioTrack').join(', ')})`);
+
+  const mimeType = getSupportedMimeType();
+  const recorder = new MediaRecorder(stream, { mimeType });
+  const chunks: BlobPart[] = [];
+  const startTime = Date.now();
+
+  return new Promise<AudioEvidence>((resolve, reject) => {
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        chunks.push(e.data);
+      }
+    };
+
+    recorder.onerror = (errEvent: any) => {
+      console.error('[SafeCheck Audio] MediaRecorder error:', errEvent);
+      try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+      reject(new Error('Audio recording hardware error.'));
+    };
+
+    recorder.onstop = () => {
+      const stopTime = Date.now();
+      const actualDuration = Math.max(1, Math.round((stopTime - startTime) / 1000));
+      try {
+        stream.getTracks().forEach((track) => track.stop());
+      } catch {}
+
+      if (chunks.length === 0) {
+        reject(new Error('No microphone audio data captured.'));
+        return;
+      }
+
+      const blob = new Blob(chunks, { type: mimeType });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = (reader.result as string) || '';
+        const evidence: AudioEvidence = {
+          audioDataUrl: dataUrl,
+          recordedAt: new Date(startTime).toISOString(),
+          durationSeconds: actualDuration,
+          mimeType,
+        };
+        latestAudioSnapshot = evidence;
+        try {
+          sessionStorage.setItem('safecheck_latest_audio_snapshot', JSON.stringify(evidence));
+        } catch {}
+        resolve(evidence);
+      };
+      reader.onerror = () => reject(new Error('Failed to encode audio data URL.'));
+      reader.readAsDataURL(blob);
+    };
+
+    recorder.start(1000);
+
+    setTimeout(() => {
+      if (recorder.state === 'recording') {
+        try {
+          recorder.stop();
+        } catch {}
+      }
+    }, durationSeconds * 1000);
+  });
 }
 
 /**
@@ -626,7 +519,9 @@ export function getLatestAudioSnapshot(): AudioEvidence | null {
 
 /**
  * Freezes and captures the latest audio evidence upon SOS trigger.
- * Guarantees a valid AudioEvidence snapshot is locked and returned.
+ * If a rolling recording is active, flushes and captures the real ambient slice.
+ * If no real recording is available, returns null.
+ * NEVER generates synthetic mock tones or fake WAV audio.
  */
 export async function freezeAudioSnapshot(): Promise<AudioEvidence | null> {
   clearTimeout(rollingTimerId);
@@ -636,35 +531,41 @@ export async function freezeAudioSnapshot(): Promise<AudioEvidence | null> {
   if (mediaRecorder && mediaRecorder.state === 'recording') {
     console.log('[SafeCheck Audio] Active rolling trip recording detected. Flushing active buffer for SOS...');
     try {
+      const activeRec = mediaRecorder;
       const flushPromise = new Promise<AudioEvidence | null>((resolve) => {
-        const prevOnStop = mediaRecorder!.onstop;
-        mediaRecorder!.onstop = (ev) => {
+        const prevOnStop = activeRec.onstop;
+        activeRec.onstop = (ev) => {
           if (prevOnStop) {
-            try { prevOnStop.call(mediaRecorder, ev); } catch (e) {}
+            try { prevOnStop.call(activeRec, ev); } catch (e) {}
           }
-          setTimeout(() => {
+          // Poll briefly for FileReader in onstop to set latestAudioSnapshot
+          let attempts = 0;
+          const poll = setInterval(() => {
+            attempts++;
             const snap = getLatestAudioSnapshot();
-            console.log('[SafeCheck Audio] Active rolling clip flushed and captured:', Boolean(snap));
-            resolve(snap);
-          }, 250);
+            if (snap && snap.audioDataUrl) {
+              clearInterval(poll);
+              resolve(snap);
+            } else if (attempts >= 10) {
+              clearInterval(poll);
+              resolve(getLatestAudioSnapshot());
+            }
+          }, 100);
         };
+
         try {
-          console.log(`[SafeCheck Audio] 🛑 MediaRecorder.stop() called on rolling recorder by freezeAudioSnapshot() at ${new Date().toISOString()}`);
-          console.log(new Error('[SafeCheck Audio freezeAudioSnapshot rolling recorder stop stack]').stack);
-          mediaRecorder!.stop();
+          if (typeof activeRec.requestData === 'function') {
+            activeRec.requestData();
+          }
+          activeRec.stop();
         } catch (e) {
           resolve(getLatestAudioSnapshot());
         }
       });
 
-      if (currentStream) {
-        currentStream.getTracks().forEach((track) => track.stop());
-        currentStream = null;
-      }
-
       const flushed = await Promise.race([
         flushPromise,
-        new Promise<null>((r) => setTimeout(() => r(null), 1500)),
+        new Promise<null>((r) => setTimeout(() => r(null), 1800)),
       ]);
 
       if (flushed && flushed.audioDataUrl) {
@@ -683,17 +584,9 @@ export async function freezeAudioSnapshot(): Promise<AudioEvidence | null> {
     return existing;
   }
 
-  // 3. Fallback emergency forensic audio generation tone
-  console.log('[SafeCheck Audio] Generating emergency forensic audio tone as initial fallback...');
-  const fallbackUrl = createForensicAudioDataUrl(DEFAULT_SOS_AUDIO_DURATION_SECONDS);
-  const fallbackEvidence: AudioEvidence = {
-    audioDataUrl: fallbackUrl,
-    recordedAt: new Date().toISOString(),
-    durationSeconds: DEFAULT_SOS_AUDIO_DURATION_SECONDS,
-    mimeType: 'audio/wav',
-  };
-  latestAudioSnapshot = fallbackEvidence;
-  return fallbackEvidence;
+  // 3. No mock tone generator! Return null if no genuine ambient audio snapshot exists yet.
+  console.log('[SafeCheck Audio] No pre-existing ambient audio snapshot in RAM. Returning null.');
+  return null;
 }
 
 /**
@@ -704,8 +597,6 @@ export function purgeAudioSnapshots(): void {
 
   if (mediaRecorder && mediaRecorder.state === 'recording') {
     try {
-      console.log(`[SafeCheck Audio] 🛑 MediaRecorder.stop() called on rolling recorder by purgeAudioSnapshots() at ${new Date().toISOString()}`);
-      console.log(new Error('[SafeCheck Audio purgeAudioSnapshots stop stack]').stack);
       mediaRecorder.stop();
     } catch (e) {}
   }
