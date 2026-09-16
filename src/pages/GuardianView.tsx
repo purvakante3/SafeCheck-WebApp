@@ -20,6 +20,8 @@ import {
   ArrowLeft,
   Volume2,
   Lock,
+  Mic,
+  Loader2,
 } from 'lucide-react';
 import { Trip } from '../types';
 import {
@@ -131,6 +133,7 @@ export const GuardianView: React.FC<GuardianViewProps> = ({
   const lastSeen = computeLastSeenSafe(trip);
 
   const isAlerted = trip?.status === 'alerted';
+  const isSosAlert = isAlerted || Boolean(trip?.isSosEvent);
   const isReminded = trip?.status === 'reminded';
   const isSafe = trip?.status === 'safe';
   const isActive = trip?.status === 'active';
@@ -149,10 +152,21 @@ export const GuardianView: React.FC<GuardianViewProps> = ({
       ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '';
 
+  const resolvedLat = typeof trip?.latitude === 'number'
+    ? trip.latitude
+    : (typeof trip?.sosLocation?.lat === 'number'
+        ? trip.sosLocation.lat
+        : (typeof (trip?.sosLocation as any)?.latitude === 'number' ? (trip?.sosLocation as any).latitude : null));
+  const resolvedLng = typeof trip?.longitude === 'number'
+    ? trip.longitude
+    : (typeof trip?.sosLocation?.lng === 'number'
+        ? trip.sosLocation.lng
+        : (typeof (trip?.sosLocation as any)?.longitude === 'number' ? (trip?.sosLocation as any).longitude : null));
+
   const mapsUrl = trip?.locationUrl
     ? trip.locationUrl
-    : trip?.latitude && trip?.longitude
-    ? `https://www.google.com/maps?q=${trip.latitude},${trip.longitude}`
+    : (resolvedLat !== null && resolvedLng !== null)
+    ? `https://www.google.com/maps?q=${resolvedLat},${resolvedLng}`
     : null;
 
   return (
@@ -383,8 +397,8 @@ export const GuardianView: React.FC<GuardianViewProps> = ({
                       Current / Last Known Location
                     </h2>
                     <p className="text-xs text-[#6B6368]">
-                      {trip.latitude && trip.longitude
-                        ? `GPS Coordinates: ${trip.latitude.toFixed(5)}, ${trip.longitude.toFixed(5)}`
+                      {resolvedLat !== null && resolvedLng !== null
+                        ? `GPS Coordinates: ${resolvedLat.toFixed(5)}, ${resolvedLng.toFixed(5)}`
                         : 'Coordinates recorded at trip check-in'}
                     </p>
                   </div>
@@ -405,12 +419,12 @@ export const GuardianView: React.FC<GuardianViewProps> = ({
               </div>
 
               {/* Embedded Map Display or Coordinates Box */}
-              {trip.latitude && trip.longitude ? (
+              {resolvedLat !== null && resolvedLng !== null ? (
                 <div className="space-y-3">
                   <div className="w-full h-64 sm:h-72 rounded-2xl overflow-hidden border border-[#EFE8E1] bg-[#FAF6F3] relative shadow-inner">
                     <iframe
                       title="Traveler Location Map"
-                      src={`https://maps.google.com/maps?q=${trip.latitude},${trip.longitude}&z=15&output=embed`}
+                      src={`https://maps.google.com/maps?q=${resolvedLat},${resolvedLng}&z=15&output=embed`}
                       className="w-full h-full border-0"
                       loading="lazy"
                     />
@@ -442,7 +456,7 @@ export const GuardianView: React.FC<GuardianViewProps> = ({
                       </button>
 
                       <a
-                        href={`https://maps.apple.com/?ll=${trip.latitude},${trip.longitude}&q=SafeCheck+Location`}
+                        href={`https://maps.apple.com/?ll=${resolvedLat},${resolvedLng}&q=SafeCheck+Location`}
                         target="_blank"
                         rel="noreferrer"
                         className="px-3 py-1.5 rounded-xl bg-white text-[#3A3A3A] hover:bg-[#F3ECE5] font-bold text-xs border border-[#EFE8E1] flex items-center space-x-1"
@@ -465,12 +479,27 @@ export const GuardianView: React.FC<GuardianViewProps> = ({
             </div>
 
             {/* AUDIO EVIDENCE IF ATTACHED TO SOS */}
-            {trip.audioEvidence && (
+            {trip.audioEvidence ? (
               <AudioEvidencePlayer
                 evidence={trip.audioEvidence}
                 title="🚨 Emergency Audio Recording Attached"
               />
-            )}
+            ) : isSosAlert ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5 shadow-xs flex items-center space-x-3.5 text-amber-900">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center shrink-0 text-amber-700 animate-pulse">
+                  <Mic className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <h3 className="font-bold text-xs flex items-center space-x-1.5">
+                    <span>SOS Audio Evidence Recording in Progress</span>
+                    <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                  </h3>
+                  <p className="text-[11px] text-amber-700">
+                    The traveler's device is capturing 30-second forensic audio evidence. This player will automatically appear once the audio is synced.
+                  </p>
+                </div>
+              </div>
+            ) : null}
 
             {/* ACTION & RESCUE HUB */}
             <div className="bg-white rounded-3xl border border-[#EFE8E1] p-6 sm:p-7 shadow-xs space-y-5">

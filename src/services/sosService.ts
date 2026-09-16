@@ -20,14 +20,15 @@ import {
   onSnapshot,
   updateDoc,
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage, auth } from './firebase';
 import { SOSEvent, SOSEventType, SOSEventStatus, SOSAudioEvidence, EmergencyContact, Trip, AudioEvidence } from '../types';
 import { getCachedContacts, getUserContacts } from './contactService';
 import { notifySosTriggered } from './notificationService';
 import { isDeviceOnline, buildEmergencySmsMessage, triggerNativeSms } from './offlineSyncService';
 import { ensureAuthStateReady } from './authService';
-import { freezeAudioSnapshot, getLatestAudioSnapshot, captureMicrophoneAudioEvidence } from './audioSnapshotService';
+import { freezeAudioSnapshot, getLatestAudioSnapshot, captureMicrophoneAudioEvidence, startSosEvidenceRecording } from './audioSnapshotService';
+import { getCurrentLocation } from './locationService';
 
 // Helpers to handle data URLs & Blobs
 function dataUrlToBlob(dataUrl: string): { blob: Blob; mimeType: string } {
@@ -145,40 +146,50 @@ export async function uploadAndLogAudioEvidence(params: {
     }
   }
 
-  // 2. FALLBACK: Direct Firebase Storage upload only if server proxy was unavailable
-  if (!downloadUrl && isDeviceOnline() && audioBlob.size > 0) {
+  // 2. Direct Firebase Storage upload with full progress tracking and error logging
+  if (isDeviceOnline() && audioBlob.size > 0) {
+    console.log(`[SafeCheck Firebase Storage] 📤 Starting Firebase Storage upload for trip_id="${targetTripId}" at path: "${storageRefPath}" (${audioBlob.size} bytes, mime: "${detectedMime}")...`);
     try {
       const fileRef = ref(storage, storageRefPath);
-      const uploadPromise = (async () => {
-        const uploadResult = await uploadBytes(fileRef, audioBlob, {
-          contentType: detectedMime,
-          customMetadata: {
-            trip_id: targetTripId,
-            sos_id: targetTripId,
-            user_id: userId,
-            recorded_at: recordedAt,
+      const uploadTask = uploadBytesResumable(fileRef, audioBlob, {
+        contentType: detectedMime,
+        customMetadata: {
+          trip_id: targetTripId,
+          sos_id: targetTripId,
+          user_id: userId,
+          recorded_at: recordedAt,
+        },
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            const progress = snapshot.totalBytes > 0 ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) : 0;
+            console.log(`[SafeCheck Firebase Storage] 📊 Upload progress for trip "${targetTripId}": ${progress}% (${snapshot.bytesTransferred}/${snapshot.totalBytes} bytes, state: ${snapshot.state})`);
           },
-        });
-        const url = await getDownloadURL(uploadResult.ref);
-        return { url, size: uploadResult.metadata?.size };
-      })();
-
-      const uploadResult = await Promise.race([
-        uploadPromise,
-        new Promise<{ url: string; size?: number }>((_, reject) =>
-          setTimeout(() => reject(new Error('Firebase Storage upload timed out after 3.5s')), 3500)
-        ),
-      ]);
-
-      downloadUrl = uploadResult.url;
-      if (uploadResult.size) fileSizeBytes = uploadResult.size;
-      console.log(`[SafeCheck Storage] Uploaded audio evidence to Firebase Storage at: ${storagePath}`);
+          (storageErr: any) => {
+            console.error(`[SafeCheck Firebase Storage ❌ Upload Error] Code: "${storageErr?.code || 'UNKNOWN'}", Message: "${storageErr?.message || storageErr}", ServerResponse: "${storageErr?.serverResponse || ''}"`);
+            reject(storageErr);
+          },
+          async () => {
+            try {
+              downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+              fileSizeBytes = uploadTask.snapshot.totalBytes;
+              console.log(`[SafeCheck Firebase Storage ✅ Success] Audio uploaded to Firebase Storage for trip "${targetTripId}"! Download URL: ${downloadUrl}`);
+              resolve();
+            } catch (urlErr) {
+              reject(urlErr);
+            }
+          }
+        );
+      });
     } catch (storageErr: any) {
-      console.warn('[SafeCheck Storage] Direct Firebase Storage upload notice:', storageErr?.message || storageErr);
+      console.warn(`[SafeCheck Firebase Storage] Direct upload attempt completed with warning/fallback (${storageErr?.code || 'STORAGE_NOTICE'}):`, storageErr?.message || storageErr);
     }
   }
 
-  // 3. Fallback URL reference if network was offline
+  // 3. Fallback URL reference if network was offline or upload proxy was used
   if (!downloadUrl) {
     downloadUrl = typeof audioBlobOrDataUrl === 'string' && !audioBlobOrDataUrl.startsWith('data:')
       ? audioBlobOrDataUrl
@@ -195,18 +206,19 @@ export async function uploadAndLogAudioEvidence(params: {
     download_url: downloadUrl,
     duration_seconds: durationSeconds,
     recorded_at: recordedAt,
-    file_size_bytes: fileSizeBytes || 1024 * 18, // fallback size if zero
+    file_size_bytes: fileSizeBytes || (audioBlob.size > 0 ? audioBlob.size : 1024 * 18),
     mime_type: detectedMime,
   };
 
   // 4. Write metadata document to independent top-level collection "sos_audio_evidence" linked to trip_id
   let directFirestoreSucceeded = false;
+  console.log(`[SafeCheck Firestore] 📝 Writing metadata document to 'sos_audio_evidence' collection with ID="${audioId}" matching trip_id="${targetTripId}" at ${new Date().toISOString()}...`);
   try {
     await Promise.race([
       setDoc(doc(db, 'sos_audio_evidence', audioId), {
         audio_id: audioEvidenceRecord.audio_id,
-        trip_id: audioEvidenceRecord.trip_id,
-        sos_id: audioEvidenceRecord.sos_id,
+        trip_id: targetTripId,
+        sos_id: targetTripId,
         user_id: audioEvidenceRecord.user_id,
         storage_path: audioEvidenceRecord.storage_path,
         download_url: audioEvidenceRecord.download_url,
@@ -216,16 +228,17 @@ export async function uploadAndLogAudioEvidence(params: {
         mime_type: audioEvidenceRecord.mime_type,
         createdAt: new Date().toISOString(),
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore audio evidence write timeout')), 2500)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore audio evidence write timeout')), 3500)),
     ]);
     directFirestoreSucceeded = true;
-    console.log(`[SafeCheck Audio] Saved record to independent collection sos_audio_evidence linked to trip: ${targetTripId}`);
+    console.log(`[SafeCheck Firestore ✅ Success] Saved metadata document in 'sos_audio_evidence' matching trip_id="${targetTripId}".`);
   } catch (firestoreErr: any) {
-    console.warn('[SafeCheck Audio] Direct Firestore write to sos_audio_evidence notice:', firestoreErr?.message || firestoreErr);
+    console.warn('[SafeCheck Firestore ⚠️ Notice] Direct write to sos_audio_evidence notice:', firestoreErr?.message || firestoreErr);
   }
 
   // 5. Update the corresponding trips document directly with the audio evidence reference
   try {
+    console.log(`[SafeCheck Firestore] 🔄 Updating 'trips' document "${targetTripId}" with attached audioEvidence reference...`);
     await setDoc(doc(db, 'trips', targetTripId), {
       audioEvidence: {
         id: audioId,
@@ -240,9 +253,9 @@ export async function uploadAndLogAudioEvidence(params: {
         mimeType: detectedMime,
       },
     }, { merge: true });
-    console.log(`[SafeCheck Audio] Attached audio evidence directly into trips doc: ${targetTripId}`);
+    console.log(`[SafeCheck Firestore ✅ Success] Attached audioEvidence directly into trips doc: "${targetTripId}".`);
   } catch (tripUpdateErr) {
-    console.warn('[SafeCheck Audio] Notice attaching audio directly to trip doc:', tripUpdateErr);
+    console.warn('[SafeCheck Firestore ⚠️ Notice] Notice attaching audio directly to trip doc:', tripUpdateErr);
   }
 
   // 6. Server Admin SDK fallback if direct client write had permissions or network issues
@@ -555,9 +568,43 @@ export async function triggerSOSAlert(
   const escalatedTo = contacts.map((c) => c.id || c.email);
 
   // 4. STEP A: Write/Update SOS alert data directly in Firestore "trips" collection
-  const resolvedLat = typeof latitude === 'number' ? latitude : null;
-  const resolvedLng = typeof longitude === 'number' ? longitude : null;
-  const resolvedLocUrl = locationUrl || (resolvedLat && resolvedLng ? `https://maps.google.com/?q=${resolvedLat},${resolvedLng}` : null);
+  let resolvedLat = typeof latitude === 'number' ? latitude : null;
+  let resolvedLng = typeof longitude === 'number' ? longitude : null;
+  let resolvedLocUrl = locationUrl || null;
+
+  if (resolvedLat === null || resolvedLng === null) {
+    console.log(`[SafeCheck SOS GPS] 🛰️ Coordinates not pre-supplied. Capturing GPS coordinates at the moment of SOS trigger...`);
+    try {
+      const locRes = await Promise.race([
+        getCurrentLocation(),
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('GPS capture timeout (3500ms)')), 3500)),
+      ]);
+      if (locRes && locRes.success && typeof locRes.latitude === 'number' && typeof locRes.longitude === 'number') {
+        resolvedLat = locRes.latitude;
+        resolvedLng = locRes.longitude;
+        resolvedLocUrl = locRes.locationUrl || `https://maps.google.com/?q=${resolvedLat},${resolvedLng}`;
+        console.log(`[SafeCheck SOS GPS] ✅ Successfully captured GPS coordinates at moment of SOS trigger: lat=${resolvedLat}, lng=${resolvedLng}, accuracy=${locRes.accuracy ?? 'unknown'}m`);
+      } else {
+        console.warn(`[SafeCheck SOS GPS] ⚠️ Geolocation capture did not return valid coordinates: ${locRes?.errorMessage || 'unknown error'}`);
+      }
+    } catch (gpsErr: any) {
+      console.warn(`[SafeCheck SOS GPS] ⚠️ Geolocation capture error at moment of SOS trigger (permission denied, timeout, or unavailable): ${gpsErr?.message || gpsErr}`);
+    }
+  } else {
+    console.log(`[SafeCheck SOS GPS] 📍 Using pre-supplied GPS coordinates: lat=${resolvedLat}, lng=${resolvedLng}`);
+  }
+
+  if (!resolvedLocUrl && resolvedLat !== null && resolvedLng !== null) {
+    resolvedLocUrl = `https://maps.google.com/?q=${resolvedLat},${resolvedLng}`;
+  }
+
+  const sosLocationData = (resolvedLat !== null && resolvedLng !== null) ? {
+    lat: resolvedLat,
+    lng: resolvedLng,
+    latitude: resolvedLat,
+    longitude: resolvedLng,
+  } : null;
+
   const targetTripId = activeTripId || sosId;
 
   try {
@@ -568,12 +615,7 @@ export async function triggerSOSAlert(
         trip_id: activeTripId,
         latitude: resolvedLat,
         longitude: resolvedLng,
-        location: {
-          lat: resolvedLat,
-          lng: resolvedLng,
-          latitude: resolvedLat,
-          longitude: resolvedLng,
-        },
+        location: sosLocationData || undefined,
         type: sosType,
         status: options?.isLateEscalation ? 'escalated' : 'active',
         countdown_started_at: options?.countdownStartedAt || now,
@@ -604,7 +646,7 @@ export async function triggerSOSAlert(
           isSosEvent: true,
           sosType: sosType,
           sosTimestamp: now,
-          sosLocation: { lat: resolvedLat, lng: resolvedLng },
+          sosLocation: sosLocationData,
           sosStatus: options?.isLateEscalation ? 'escalated' : 'active',
           escalatedTo: escalatedTo,
           status: 'alerted',
@@ -612,6 +654,8 @@ export async function triggerSOSAlert(
           latitude: resolvedLat,
           longitude: resolvedLng,
           locationUrl: resolvedLocUrl,
+          location: sosLocationData,
+          gps: sosLocationData,
         }),
         new Promise((_, reject) => setTimeout(() => reject('updateDoc trip timeout'), 2000)),
       ]);
@@ -630,7 +674,10 @@ export async function triggerSOSAlert(
               isSosEvent: true,
               sosType,
               sosTimestamp: now,
-              sosLocation: { lat: resolvedLat, lng: resolvedLng },
+              sosLocation: sosLocationData,
+              latitude: resolvedLat,
+              longitude: resolvedLng,
+              locationUrl: resolvedLocUrl,
               sosStatus: options?.isLateEscalation ? 'escalated' : 'active',
               escalatedTo,
             })
@@ -846,11 +893,10 @@ export async function triggerSOSAlert(
     })();
   }
 
-  // 7. STEP D (BACKGROUND & BEST-EFFORT):
-  // Decouple audio evidence upload completely from core SOS dispatch.
-  // The alert has already been created and contacts notified. This runs in the background
-  // and will NEVER block, delay, or fail the SOS alert under any circumstance.
-  // Links audio evidence directly to the tripId.
+  // 7. STEP D (BACKGROUND & PERSISTENT SOS EVIDENCE RECORDING):
+  // Launch persistent 30-second SOS ambient audio recording session in the background.
+  // This continues recording across any route navigations, unmounts, or confirmation screens.
+  // When finished, it automatically uploads to Firebase Storage and creates a document in sos_audio_evidence.
   const activeSnapshot = snapshotToAttach || getLatestAudioSnapshot();
   if (activeSnapshot && (activeSnapshot.audioDataUrl || (activeSnapshot as any).blob)) {
     const audioPayloadToUpload = {
@@ -867,35 +913,30 @@ export async function triggerSOSAlert(
       uploadAndLogAudioEvidence(audioPayloadToUpload)
         .then((logged) => {
           if (logged) {
-            console.log(`[SafeCheck SOS Background] Audio evidence uploaded and logged for trip: ${targetTripId}`);
+            console.log(`[SafeCheck SOS Background] Initial audio evidence snapshot uploaded and logged for trip: ${targetTripId}`);
           }
         })
         .catch((err) => {
           console.warn('[SafeCheck SOS Background] Audio evidence upload notice (non-blocking):', err?.message || err);
         });
     }, 50);
-  } else {
-    // If no audio snapshot was pre-captured, capture on-demand in background and upload
-    setTimeout(() => {
-      captureMicrophoneAudioEvidence(2)
-        .then((freshSnapshot) => {
-          if (freshSnapshot && (freshSnapshot.audioDataUrl || (freshSnapshot as any).blob)) {
-            uploadAndLogAudioEvidence({
-              tripId: targetTripId,
-              sosId: targetTripId,
-              userId: effectiveUserId,
-              audioBlobOrDataUrl: (freshSnapshot as any).blob || freshSnapshot.audioDataUrl,
-              recordedAt: freshSnapshot.recordedAt || now,
-              durationSeconds: freshSnapshot.durationSeconds || 2,
-              mimeType: freshSnapshot.mimeType || 'audio/wav',
-            }).catch((e) => console.warn('[SafeCheck SOS Background] Audio fallback upload notice:', e));
-          }
-        })
-        .catch((err) => {
-          console.warn('[SafeCheck SOS Background] Audio evidence capture fallback notice:', err);
-        });
-    }, 50);
   }
+
+  // Always launch the full 120-second (2-minute) live ambient recording session in the background
+  setTimeout(() => {
+    console.log(`[SafeCheck SOS Background] 🎙️ Initiating 120-second (2-minute) persistent SOS audio recording for trip "${targetTripId}"...`);
+    startSosEvidenceRecording(targetTripId, effectiveUserId, 120)
+      .then((res) => {
+        if (res.success) {
+          console.log(`[SafeCheck SOS Background] ✅ 120-second persistent SOS audio recording started for trip "${targetTripId}".`);
+        } else {
+          console.warn(`[SafeCheck SOS Background] ⚠️ Persistent SOS audio recording notice: ${res.error}`);
+        }
+      })
+      .catch((err) => {
+        console.warn('[SafeCheck SOS Background] ⚠️ Error starting persistent SOS recording:', err);
+      });
+  }, 100);
 
   return {
     sosId,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Mic, ShieldCheck, AlertCircle, Trash2, Info, Lock } from 'lucide-react';
 import { AudioEvidence } from '../types';
 import {
@@ -24,20 +24,34 @@ export const AudioEvidenceRecorder: React.FC<AudioEvidenceRecorderProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
 
+  // Store callbacks, active trip and started flag in refs so re-renders don't recreate or interrupt recording
+  const onSnapshotUpdatedRef = useRef(onSnapshotUpdated);
+  onSnapshotUpdatedRef.current = onSnapshotUpdated;
+  const isStartedRef = useRef(false);
+  const tripIdRef = useRef(tripId);
+
   const isSupported = isAudioSnapshotSupported();
 
   useEffect(() => {
     if (!isEnabled || !isSupported || !tripId) {
-      purgeAudioSnapshots();
       setIsRecording(false);
       return;
     }
 
+    // If already started for this specific trip, avoid duplicate restart on component re-renders
+    if (isStartedRef.current && tripIdRef.current === tripId) {
+      return;
+    }
+
+    isStartedRef.current = true;
+    tripIdRef.current = tripId;
     let isMounted = true;
 
     async function initRecorder() {
       const result = await startRollingAudioRecorder(tripId, (snapshot) => {
-        if (onSnapshotUpdated) onSnapshotUpdated(snapshot);
+        if (onSnapshotUpdatedRef.current) {
+          onSnapshotUpdatedRef.current(snapshot);
+        }
       });
 
       if (!isMounted) return;
@@ -55,10 +69,12 @@ export const AudioEvidenceRecorder: React.FC<AudioEvidenceRecorderProps> = ({
 
     initRecorder();
 
+    // Do NOT stop or purge the recorder on component unmount or view navigation!
+    // Recordings must survive component re-renders and navigation to another screen.
     return () => {
       isMounted = false;
     };
-  }, [tripId, isEnabled, isSupported, onSnapshotUpdated]);
+  }, [tripId, isEnabled, isSupported]);
 
   if (!isEnabled || !isSupported) return null;
 

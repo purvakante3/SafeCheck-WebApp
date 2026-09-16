@@ -166,6 +166,7 @@ interface StoredTrip {
   notifiedCount?: number;
   notifiedContacts?: string[];
   isSosEvent?: boolean;
+  sosLocation?: { lat?: number; lng?: number; latitude?: number; longitude?: number } | null;
   audioEvidence?: {
     id?: string;
     tripId?: string;
@@ -2367,6 +2368,7 @@ async function startServer() {
   // Guardian Dashboard Endpoint for public, unauthenticated real-time companion view
   app.get('/api/guardian/:tripId', async (req, res) => {
     const { tripId } = req.params;
+    console.log(`[Server /api/guardian/:tripId] 🔎 Request for tripId="${tripId}" at ${new Date().toISOString()}`);
     let trip = localTrips.get(tripId);
 
     if (!trip && isFirebaseAvailable && db) {
@@ -2374,17 +2376,24 @@ async function startServer() {
         const docSnap = await db.collection('trips').doc(tripId).get();
         if (docSnap.exists) {
           trip = { id: docSnap.id, ...docSnap.data() };
+          console.log(`[Server /api/guardian/:tripId] ✅ Found trip document in Firestore for "${tripId}" (status: ${trip.status})`);
         }
-      } catch (e) {}
+      } catch (e: any) {
+        console.warn(`[Server /api/guardian/:tripId] ⚠️ Firestore trip lookup error:`, e?.message || e);
+      }
     }
 
     // Attach audio evidence if available and not already on the trip
     if (trip && !trip.audioEvidence) {
       if (isFirebaseAvailable && db) {
         try {
-          const audioSnap = await db.collection('sos_audio_evidence').where('trip_id', '==', tripId).limit(1).get();
+          let audioSnap = await db.collection('sos_audio_evidence').where('trip_id', '==', tripId).limit(1).get();
+          if (audioSnap.empty) {
+            audioSnap = await db.collection('sos_audio_evidence').where('sos_id', '==', tripId).limit(1).get();
+          }
           if (!audioSnap.empty) {
             const aDoc = audioSnap.docs[0].data();
+            console.log(`[Server /api/guardian/:tripId] 🎵 Found linked audio evidence doc in Firestore for trip "${tripId}": audio_id="${aDoc.audio_id}"`);
             trip.audioEvidence = {
               id: aDoc.audio_id,
               tripId: tripId,
@@ -2398,12 +2407,15 @@ async function startServer() {
               mimeType: aDoc.mime_type,
             };
           }
-        } catch (aErr) {}
+        } catch (aErr: any) {
+          console.warn(`[Server /api/guardian/:tripId] ⚠️ Error querying sos_audio_evidence:`, aErr?.message || aErr);
+        }
       }
 
       if (!trip.audioEvidence) {
         for (const a of localAudioEvidence.values()) {
           if (a.trip_id === tripId || a.sos_id === tripId) {
+            console.log(`[Server /api/guardian/:tripId] 🎵 Found linked audio evidence in local memory for trip "${tripId}": audio_id="${a.audio_id}"`);
             trip.audioEvidence = {
               id: a.audio_id,
               tripId: tripId,
@@ -2422,10 +2434,25 @@ async function startServer() {
       }
     }
 
+    // Normalize GPS coordinates from sosLocation if present
+    if (trip && trip.sosLocation) {
+      const sLat = trip.sosLocation.lat ?? trip.sosLocation.latitude;
+      const sLng = trip.sosLocation.lng ?? trip.sosLocation.longitude;
+      if (typeof sLat === 'number' && typeof sLng === 'number' && !isNaN(sLat) && !isNaN(sLng)) {
+        trip.latitude = trip.latitude ?? sLat;
+        trip.longitude = trip.longitude ?? sLng;
+        if (!trip.locationUrl) {
+          trip.locationUrl = `https://maps.google.com/?q=${sLat},${sLng}`;
+        }
+      }
+    }
+
     if (trip) {
+      console.log(`[Server /api/guardian/:tripId] 🚀 Returning trip "${tripId}": status="${trip.status}", isSosEvent=${Boolean(trip.isSosEvent)}, hasAudioEvidence=${Boolean(trip.audioEvidence)}, hasGPS=${Boolean(trip.latitude && trip.longitude)}`);
       return res.json({ success: true, trip });
     }
 
+    console.warn(`[Server /api/guardian/:tripId] ❌ Trip "${tripId}" not found`);
     res.status(404).json({ success: false, error: 'Trip not found' });
   });
 
