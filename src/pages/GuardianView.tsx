@@ -22,6 +22,7 @@ import {
   Lock,
   Mic,
   Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { Trip } from '../types';
 import {
@@ -485,20 +486,85 @@ export const GuardianView: React.FC<GuardianViewProps> = ({
                 title="🚨 Emergency Audio Recording Attached"
               />
             ) : isSosAlert ? (
-              <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5 shadow-xs flex items-center space-x-3.5 text-amber-900">
-                <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center shrink-0 text-amber-700 animate-pulse">
-                  <Mic className="w-5 h-5" />
+              trip.audioStatus === 'uploading' ? (
+                <div id="sos-audio-status-uploading" className="bg-amber-50/90 border border-amber-200 rounded-3xl p-5 shadow-xs flex items-start space-x-3.5 text-amber-950">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center shrink-0 text-amber-700">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  </div>
+                  <div className="space-y-1 flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-xs text-amber-900 flex items-center space-x-1.5">
+                        <span>Finalizing & Syncing Audio Evidence</span>
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-200/80 text-amber-900">
+                        Syncing...
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      The 30-second live recording is complete. Processing forensic audio evidence and syncing directly to emergency view...
+                    </p>
+                  </div>
                 </div>
-                <div className="space-y-0.5">
-                  <h3 className="font-bold text-xs flex items-center space-x-1.5">
-                    <span>SOS Audio Evidence Recording in Progress</span>
-                    <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
-                  </h3>
-                  <p className="text-[11px] text-amber-700">
-                    The traveler's device is capturing 30-second forensic audio evidence. This player will automatically appear once the audio is synced.
-                  </p>
+              ) : trip.audioStatus === 'failed' ? (
+                <div id="sos-audio-status-failed" className="bg-rose-50/90 border border-rose-200 rounded-3xl p-5 shadow-xs flex items-start space-x-3.5 text-rose-950">
+                  <div className="w-10 h-10 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0 text-rose-700">
+                    <AlertCircle className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-xs text-rose-900">
+                        SOS Audio Evidence Unavailable
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-rose-200/80 text-rose-900">
+                        Unavailable
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-rose-800 leading-relaxed">
+                      {trip.audioError || "The traveler's device was unable to capture live ambient audio (microphone access was denied or hardware was unavailable)."}
+                    </p>
+                    <button
+                      id="guardian-retry-audio-check-btn"
+                      onClick={handleManualRefresh}
+                      className="inline-flex items-center space-x-1.5 text-xs font-semibold text-rose-800 hover:text-rose-950 bg-rose-100/70 hover:bg-rose-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${manualRefreshing ? 'animate-spin' : ''}`} />
+                      <span>Check Again for Synced Audio</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div id="sos-audio-status-recording" className="bg-[#FAF0F4] border border-[#F2D1E0] rounded-3xl p-5 shadow-xs flex items-start space-x-3.5 text-[#5C243B]">
+                  <div className="w-10 h-10 rounded-2xl bg-[#F4D9E6] flex items-center justify-center shrink-0 text-[#9E4D71] animate-pulse relative">
+                    <Mic className="w-5 h-5" />
+                    <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#9E4D71] opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#9E4D71]"></span>
+                    </span>
+                  </div>
+                  <div className="space-y-1 flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-xs text-[#5C243B] flex items-center space-x-1.5">
+                        <span>Recording 30-Second Forensic Audio Evidence</span>
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#9E4D71] animate-ping" />
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#F4D9E6] text-[#9E4D71]">
+                        Recording...
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#7A3654] leading-relaxed">
+                      The traveler's device is actively capturing a 30-second live ambient audio snapshot. The forensic player will automatically appear once the audio is synced.
+                    </p>
+                    <div className="flex items-center space-x-1 pt-1">
+                      <span className="w-1 h-3 bg-[#9E4D71] rounded-full animate-pulse" />
+                      <span className="w-1 h-4 bg-[#9E4D71] rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1 h-2.5 bg-[#9E4D71] rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
+                      <span className="w-1 h-5 bg-[#9E4D71] rounded-full animate-pulse" style={{ animationDelay: '450ms' }} />
+                      <span className="w-1 h-3 bg-[#9E4D71] rounded-full animate-pulse" style={{ animationDelay: '600ms' }} />
+                      <span className="text-[10px] text-[#9E4D71] font-mono font-medium ml-2">Live mic capture in progress</span>
+                    </div>
+                  </div>
+                </div>
+              )
             ) : null}
 
             {/* ACTION & RESCUE HUB */}

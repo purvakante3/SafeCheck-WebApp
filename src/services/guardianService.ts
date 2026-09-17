@@ -121,6 +121,7 @@ export async function fetchGuardianTrip(tripId: string): Promise<Trip | null> {
           durationSeconds: aDoc.duration_seconds,
           mimeType: aDoc.mime_type,
         };
+        tripData.audioStatus = 'ready';
       } else {
         console.log(`[SafeCheck Guardian Fetch] ℹ️ No audio evidence documents found in 'sos_audio_evidence' for trip_id="${tripId}" yet.`);
       }
@@ -166,6 +167,9 @@ export function subscribeGuardianTrip(
     const merged: Trip = { ...currentTrip };
     if (currentAudioEvidence) {
       merged.audioEvidence = currentAudioEvidence;
+    }
+    if (merged.audioEvidence && (!merged.audioStatus || merged.audioStatus === 'recording' || merged.audioStatus === 'uploading')) {
+      merged.audioStatus = 'ready';
     }
     // Normalize coordinates from sosLocation if needed
     if (merged.sosLocation) {
@@ -213,7 +217,11 @@ export function subscribeGuardianTrip(
       (snapshot) => {
         if (!isSubscribed) return;
         if (snapshot.exists()) {
-          currentTrip = { id: snapshot.id, ...snapshot.data() } as Trip;
+          const fresh = { id: snapshot.id, ...snapshot.data() } as Trip;
+          currentTrip = fresh;
+          if (fresh.audioEvidence && (fresh.audioEvidence.audioDataUrl || fresh.audioEvidence.download_url)) {
+            currentAudioEvidence = fresh.audioEvidence;
+          }
           emitUpdatedTrip();
         }
       },
@@ -246,6 +254,9 @@ export function subscribeGuardianTrip(
             durationSeconds: aDoc.duration_seconds,
             mimeType: aDoc.mime_type,
           };
+          if (currentTrip) {
+            currentTrip.audioStatus = 'ready';
+          }
           emitUpdatedTrip();
         }
       },

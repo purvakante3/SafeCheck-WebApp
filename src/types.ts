@@ -180,6 +180,9 @@ export interface Trip {
   emergencyContactsNotified?: any[];
   checkInEvents?: TripCheckInEvent[];
   audioEvidence?: AudioEvidence | null;
+  audioStatus?: 'recording' | 'uploading' | 'ready' | 'failed';
+  audioError?: string | null;
+  audioStatusUpdatedAt?: string | null;
   // Trip Safety Check additions
   startLatitude?: number | null;
   startLongitude?: number | null;

@@ -179,6 +179,9 @@ interface StoredTrip {
     durationSeconds: number;
     mimeType: string;
   } | null;
+  audioStatus?: 'recording' | 'uploading' | 'ready' | 'failed';
+  audioError?: string | null;
+  audioStatusUpdatedAt?: string;
   startLatitude?: number | null;
   startLongitude?: number | null;
   startAddress?: string | null;
@@ -1154,6 +1157,40 @@ async function startServer() {
       trip.status = 'cancelled';
       trip.cancelledAt = new Date().toISOString();
       localTrips.set(id, trip);
+    }
+    res.json({ success: true, trip });
+  });
+
+  // Trip Audio Evidence Status endpoint
+  app.post('/api/trips/:id/audio-status', async (req, res) => {
+    const { id } = req.params;
+    const { status, evidence, error } = req.body;
+    const trip = localTrips.get(id);
+    if (trip) {
+      trip.audioStatus = status;
+      if (evidence) trip.audioEvidence = evidence;
+      if (error) trip.audioError = error;
+      trip.audioStatusUpdatedAt = new Date().toISOString();
+      localTrips.set(id, trip);
+    }
+    if (isFirebaseAvailable && db) {
+      try {
+        const updateData: any = {
+          audioStatus: status,
+          audioStatusUpdatedAt: new Date().toISOString(),
+        };
+        if (evidence) updateData.audioEvidence = evidence;
+        if (error) updateData.audioError = error;
+        const docRef = db.collection('trips').doc(id);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          await docRef.update(updateData);
+        } else {
+          console.warn(`[SafeCheck Server] Document "${id}" does not exist in Firestore. Skipping audio-status update.`);
+        }
+      } catch (err: any) {
+        console.warn('[SafeCheck Server] Error updating trip audio-status in Firestore:', err?.message || err);
+      }
     }
     res.json({ success: true, trip });
   });

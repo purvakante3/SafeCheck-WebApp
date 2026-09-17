@@ -243,22 +243,34 @@ export async function uploadAndLogAudioEvidence(params: {
   // 5. Update the corresponding trips document directly with the audio evidence reference
   try {
     console.log(`[SafeCheck Firestore] 🔄 Updating 'trips' document "${targetTripId}" with attached audioEvidence reference...`);
-    await setDoc(doc(db, 'trips', targetTripId), {
+    const effectiveAudioUrl = (typeof audioBlobOrDataUrl === 'string' && audioBlobOrDataUrl.startsWith('data:'))
+      ? audioBlobOrDataUrl
+      : downloadUrl;
+
+    await updateDoc(doc(db, 'trips', targetTripId), {
+      audioStatus: 'ready',
+      audioStatusUpdatedAt: new Date().toISOString(),
+      audioError: null,
       audioEvidence: {
         id: audioId,
         tripId: targetTripId,
         alertId: targetTripId,
         userId: userId,
-        audioDataUrl: downloadUrl,
-        download_url: downloadUrl,
+        audioDataUrl: effectiveAudioUrl,
+        download_url: downloadUrl || effectiveAudioUrl,
         storage_path: storagePath,
         recordedAt: recordedAt,
         durationSeconds: durationSeconds,
         mimeType: detectedMime,
       },
-    }, { merge: true });
+    });
     console.log(`[SafeCheck Firestore ✅ Success] Attached audioEvidence directly into trips doc: "${targetTripId}".`);
-  } catch (tripUpdateErr) {
+  } catch (tripUpdateErr: any) {
+    const isNotFound = tripUpdateErr?.code === 'not-found' || tripUpdateErr?.message?.includes('No document to update');
+    if (isNotFound) {
+      console.warn(`[SafeCheck Firestore] 🛑 Target trip/SOS doc "${targetTripId}" was deleted from Firestore. Aborting audio attachment to avoid recreation.`);
+      return audioEvidenceRecord;
+    }
     console.warn('[SafeCheck Firestore ⚠️ Notice] Notice attaching audio directly to trip doc:', tripUpdateErr);
   }
 
@@ -387,6 +399,8 @@ export async function createSOSEventDocument(data: {
     escalatedAt: data.escalated_at || null,
     trip_id: targetTripDocId,
     sos_id: targetTripDocId,
+    audioStatus: (data as any).audioStatus || ((data as any).audioEvidence ? 'ready' : 'recording'),
+    audioEvidence: (data as any).audioEvidence || null,
   };
 
   // Persist directly to Firestore "trips" collection (guaranteed authorized by rules)
@@ -660,6 +674,8 @@ export async function triggerSOSAlert(
           locationUrl: resolvedLocUrl,
           location: sosLocationData,
           gps: sosLocationData,
+          audioStatus: snapshotToAttach ? 'ready' : 'recording',
+          audioEvidence: snapshotToAttach || null,
         }),
         new Promise((_, reject) => setTimeout(() => reject('updateDoc trip timeout'), 2000)),
       ]);
@@ -684,6 +700,8 @@ export async function triggerSOSAlert(
               locationUrl: resolvedLocUrl,
               sosStatus: options?.isLateEscalation ? 'escalated' : 'active',
               escalatedTo,
+              audioStatus: snapshotToAttach ? 'ready' : 'recording',
+              audioEvidence: snapshotToAttach || null,
             })
           );
         }
@@ -926,13 +944,13 @@ export async function triggerSOSAlert(
     }, 50);
   }
 
-  // Always launch the full 120-second (2-minute) live ambient recording session in the background
+  // Always launch the full 30-second live ambient recording session in the background
   setTimeout(() => {
-    console.log(`[SafeCheck SOS Background] 🎙️ Initiating 120-second (2-minute) persistent SOS audio recording for trip "${targetTripId}"...`);
-    startSosEvidenceRecording(targetTripId, effectiveUserId, 120)
+    console.log(`[SafeCheck SOS Background] 🎙️ Initiating 30-second persistent SOS audio recording for trip "${targetTripId}"...`);
+    startSosEvidenceRecording(targetTripId, effectiveUserId, 30)
       .then((res) => {
         if (res.success) {
-          console.log(`[SafeCheck SOS Background] ✅ 120-second persistent SOS audio recording started for trip "${targetTripId}".`);
+          console.log(`[SafeCheck SOS Background] ✅ 30-second persistent SOS audio recording started for trip "${targetTripId}".`);
         } else {
           console.warn(`[SafeCheck SOS Background] ⚠️ Persistent SOS audio recording notice: ${res.error}`);
         }
@@ -1431,45 +1449,9 @@ export async function restoreSOSEventsToFirestore(userId: string): Promise<{
     });
   } catch (e) {}
 
-  // If absolutely no events were found anywhere, seed one verified sample event so the collection is immediately created in Firestore Console
+  // If no events found, return empty results without seeding artificial records
   if (candidateEvents.size === 0) {
-    const sampleId = `sos_${Date.now()}_init`;
-    const sampleEvent: SOSEvent = {
-      sos_id: sampleId,
-      user_id: userId,
-      trip_id: null,
-      timestamp: new Date().toISOString(),
-      triggered_at: new Date().toISOString(),
-      triggeredAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      latitude: 37.7749,
-      longitude: -122.4194,
-      location: { lat: 37.7749, lng: -122.4194, latitude: 37.7749, longitude: -122.4194 },
-      gps: { latitude: 37.7749, longitude: -122.4194 },
-      locationUrl: 'https://maps.google.com/?q=37.7749,-122.4194',
-      type: 'manual',
-      status: 'resolved',
-      countdown_started_at: new Date().toISOString(),
-      responded_at: new Date().toISOString(),
-      escalated_at: null,
-      escalated_to: [],
-      emergency_contacts_notified: [
-        {
-          id: 'system_init',
-          name: 'Emergency System Verification',
-          email: 'safety-check@safecheck.internal',
-          status: 'verified',
-          notifiedAt: new Date().toISOString(),
-        },
-      ],
-      notified_contacts: ['Emergency System Verification (Verified)'],
-      notifiedContacts: ['Emergency System Verification (Verified)'],
-      notified_count: 1,
-      notifiedCount: 1,
-      destination: '🚨 SafeCheck Storage Verification Event',
-    };
-    candidateEvents.set(sampleId, sampleEvent);
-    details.push('Created initial verification event to initialize sos_events collection in Firestore');
+    return { restoredCount: 0, totalFound: 0, events: [], details: ['No events found to restore'] };
   }
 
   // 5. Commit all events to Firestore "sos_events"

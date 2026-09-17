@@ -129,6 +129,7 @@ export async function syncOfflineTripData(userId: string): Promise<{ syncedCount
       } else if (item.type === 'trail_point') {
         const point = item.payload as LocationTrailPoint;
         if (!item.tripId.startsWith('offline_')) {
+          let documentDeleted = false;
           try {
             await updateDoc(doc(db, 'trips', item.tripId), {
               locationTrail: arrayUnion(point),
@@ -140,14 +141,21 @@ export async function syncOfflineTripData(userId: string): Promise<{ syncedCount
               longitude: point.longitude,
               locationUrl: point.locationUrl || null,
             });
-          } catch {}
-          try {
-            await fetch(`/api/trips/${item.tripId}/trail`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ point }),
-            });
-          } catch {}
+          } catch (updateErr: any) {
+            if (updateErr?.code === 'not-found' || updateErr?.message?.includes('No document to update')) {
+              documentDeleted = true;
+              console.warn(`[SafeCheck Offline Sync] Trip "${item.tripId}" was deleted from Firestore. Discarding offline trail point.`);
+            }
+          }
+          if (!documentDeleted) {
+            try {
+              await fetch(`/api/trips/${item.tripId}/trail`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ point }),
+              });
+            } catch {}
+          }
         }
         syncedCount++;
       } else if (item.type === 'late_response') {
@@ -159,26 +167,38 @@ export async function syncOfflineTripData(userId: string): Promise<{ syncedCount
               updates.durationMinutes = increment(resp.extendedMinutes);
             }
             await updateDoc(doc(db, 'trips', item.tripId), updates);
-          } catch {}
+          } catch (updateErr: any) {
+            if (updateErr?.code === 'not-found' || updateErr?.message?.includes('No document to update')) {
+              console.warn(`[SafeCheck Offline Sync] Trip "${item.tripId}" was deleted from Firestore. Discarding late response.`);
+            }
+          }
         }
         syncedCount++;
       } else if (item.type === 'trip_status') {
         const { status, timestamp } = item.payload;
         if (!item.tripId.startsWith('offline_')) {
+          let documentDeleted = false;
           try {
             const updates: any = { status };
             if (status === 'safe') updates.safeAt = timestamp;
             if (status === 'cancelled') updates.cancelledAt = timestamp;
             if (status === 'alerted') updates.alertedAt = timestamp;
             await updateDoc(doc(db, 'trips', item.tripId), updates);
-          } catch {}
-          try {
-            if (status === 'safe') {
-              await fetch(`/api/trips/${item.tripId}/safe`, { method: 'POST' });
-            } else if (status === 'cancelled') {
-              await fetch(`/api/trips/${item.tripId}/cancel`, { method: 'POST' });
+          } catch (updateErr: any) {
+            if (updateErr?.code === 'not-found' || updateErr?.message?.includes('No document to update')) {
+              documentDeleted = true;
+              console.warn(`[SafeCheck Offline Sync] Trip "${item.tripId}" was deleted from Firestore. Discarding status update.`);
             }
-          } catch {}
+          }
+          if (!documentDeleted) {
+            try {
+              if (status === 'safe') {
+                await fetch(`/api/trips/${item.tripId}/safe`, { method: 'POST' });
+              } else if (status === 'cancelled') {
+                await fetch(`/api/trips/${item.tripId}/cancel`, { method: 'POST' });
+              }
+            } catch {}
+          }
         }
         syncedCount++;
       } else if (item.type === 'check_in_event') {
@@ -188,7 +208,11 @@ export async function syncOfflineTripData(userId: string): Promise<{ syncedCount
             await updateDoc(doc(db, 'trips', item.tripId), {
               checkInEvents: arrayUnion(event),
             });
-          } catch {}
+          } catch (updateErr: any) {
+            if (updateErr?.code === 'not-found' || updateErr?.message?.includes('No document to update')) {
+              console.warn(`[SafeCheck Offline Sync] Trip "${item.tripId}" was deleted from Firestore. Discarding check-in event.`);
+            }
+          }
         }
         syncedCount++;
       }

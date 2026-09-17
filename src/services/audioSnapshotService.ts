@@ -8,6 +8,8 @@
  */
 
 import { AudioEvidence } from '../types';
+import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { db } from './firebase';
 
 let mediaRecorder: MediaRecorder | null = null;
 let currentStream: MediaStream | null = null;
@@ -16,14 +18,135 @@ let latestAudioSnapshot: AudioEvidence | null = null;
 let rollingTimerId: any = null;
 
 const ROLLING_CLIP_SECONDS = 12;
-export const DEFAULT_SOS_AUDIO_DURATION_SECONDS = 120; // 120 seconds (2 minutes)
+export const DEFAULT_SOS_AUDIO_DURATION_SECONDS = 30; // 30 seconds
 
+/**
+ * Updates the trip document with the current audioStatus ('recording' | 'uploading' | 'ready' | 'failed')
+ * directly in Firestore so that any Guardian real-time onSnapshot listener updates immediately.
+ * Also syncs with the local server and localStorage.
+ */
 // Persistent module-level state for dedicated SOS emergency recording
 let activeSosRecorder: MediaRecorder | null = null;
 let activeSosStream: MediaStream | null = null;
 let activeSosTripId: string | null = null;
 let activeSosTimerId: any = null;
 let isSosRecordingStarting = false;
+
+/**
+ * Immediately stops any ongoing SOS recording hardware and clears timers.
+ */
+export function abortSosAudioRecording(): void {
+  console.log('[SafeCheck Audio SOS] 🛑 Aborting SOS audio hardware and recording timers.');
+  if (activeSosRecorder) {
+    try {
+      activeSosRecorder.ondataavailable = null;
+      activeSosRecorder.onstop = null;
+      if (activeSosRecorder.state === 'recording') {
+        activeSosRecorder.stop();
+      }
+    } catch (e) {}
+    activeSosRecorder = null;
+  }
+  if (activeSosStream) {
+    try {
+      activeSosStream.getTracks().forEach((track) => track.stop());
+    } catch (e) {}
+    activeSosStream = null;
+  }
+  if (activeSosTimerId) {
+    clearTimeout(activeSosTimerId);
+    activeSosTimerId = null;
+  }
+  activeSosTripId = null;
+  isSosRecordingStarting = false;
+}
+
+/**
+ * Updates the trip document with the current audioStatus ('recording' | 'uploading' | 'ready' | 'failed')
+ * directly in Firestore using updateDoc so deleted documents are NEVER resurrected.
+ * Also syncs with the local server and localStorage.
+ */
+export async function updateTripAudioStatus(
+  tripId: string,
+  status: 'recording' | 'uploading' | 'ready' | 'failed',
+  evidence?: AudioEvidence | null,
+  errorMsg?: string | null
+): Promise<boolean> {
+  const timestamp = new Date().toISOString();
+  console.log(`[SafeCheck Audio Status] 📡 Updating trip "${tripId}" audioStatus -> "${status}"${errorMsg ? ` (${errorMsg})` : ''}`);
+
+  const updatePayload: any = {
+    audioStatus: status,
+    audioStatusUpdatedAt: timestamp,
+  };
+
+  if (evidence) {
+    updatePayload.audioEvidence = evidence;
+  }
+  if (errorMsg) {
+    updatePayload.audioError = errorMsg;
+  } else if (status === 'ready' || status === 'recording') {
+    updatePayload.audioError = null;
+  }
+
+  // 1. Direct Firestore write to 'trips' collection - using updateDoc so deleted documents are never resurrected!
+  try {
+    if (db) {
+      await updateDoc(doc(db, 'trips', tripId), updatePayload);
+      console.log(`[SafeCheck Audio Status] ✅ Updated Firestore 'trips/${tripId}' with audioStatus="${status}".`);
+    }
+  } catch (fsErr: any) {
+    const isNotFound = fsErr?.code === 'not-found' || fsErr?.message?.includes('No document to update');
+    if (isNotFound) {
+      console.warn(`[SafeCheck Audio Status] 🛑 Trip/SOS document "${tripId}" does not exist in Firestore (it was deleted). Aborting all audio operations.`);
+      abortSosAudioRecording();
+      return false;
+    }
+    console.warn('[SafeCheck Audio Status] Direct Firestore trips update notice:', fsErr?.message || fsErr);
+  }
+
+  // 2. Server API update to keep local server memory in sync
+  try {
+    fetch(`/api/trips/${encodeURIComponent(tripId)}/audio-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status,
+        evidence: evidence || null,
+        error: errorMsg || null,
+      }),
+    }).catch(() => {});
+  } catch {}
+
+  // 3. Local storage update so local components/views immediately reflect the status
+  if (typeof localStorage !== 'undefined') {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('safecheck_trips_') || key.startsWith('safecheck_active_trip_'))) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              let updated = false;
+              const next = parsed.map((t: any) => {
+                if (t.id === tripId) {
+                  updated = true;
+                  return { ...t, ...updatePayload };
+                }
+                return t;
+              });
+              if (updated) localStorage.setItem(key, JSON.stringify(next));
+            } else if (parsed && parsed.id === tripId) {
+              localStorage.setItem(key, JSON.stringify({ ...parsed, ...updatePayload }));
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+  return true;
+}
 
 export function isAudioSnapshotSupported(): boolean {
   return (
@@ -213,6 +336,7 @@ export async function startSosEvidenceRecording(
   if (!isAudioSnapshotSupported()) {
     const errorMsg = 'MediaRecorder or getUserMedia is not supported in this browser environment.';
     console.warn(`[SafeCheck Audio SOS] ⚠️ ${errorMsg}`);
+    updateTripAudioStatus(tripId, 'failed', null, errorMsg);
     return { success: false, error: errorMsg };
   }
 
@@ -228,6 +352,9 @@ export async function startSosEvidenceRecording(
   }
 
   isSosRecordingStarting = true;
+
+  // Immediately signal to Firestore & Guardian View that recording has commenced
+  updateTripAudioStatus(tripId, 'recording');
 
   // Clean up any prior non-recording SOS recorder
   if (activeSosRecorder) {
@@ -278,6 +405,7 @@ export async function startSosEvidenceRecording(
       ? `Microphone permission DENIED by user or browser: ${micErr?.message || micErr}`
       : `Microphone access error: ${micErr?.message || micErr}`;
     console.error(`[SafeCheck Audio SOS] ❌ ${errMsg}`);
+    updateTripAudioStatus(tripId, 'failed', null, errMsg);
     return { success: false, error: errMsg };
   } finally {
     isSosRecordingStarting = false;
@@ -298,11 +426,15 @@ export async function startSosEvidenceRecording(
     const startTimeIso = new Date(startTime).toISOString();
 
     recorder.onerror = (errEvent: any) => {
-      console.error('[SafeCheck Audio SOS] ❌ MediaRecorder.onerror event:', errEvent?.error || errEvent);
+      const recErr = errEvent?.error?.message || errEvent?.message || 'MediaRecorder runtime error';
+      console.error('[SafeCheck Audio SOS] ❌ MediaRecorder.onerror event:', recErr);
+      updateTripAudioStatus(tripId, 'failed', null, recErr);
     };
 
     const safeStopRecorder = (reason: string) => {
       console.log(`[SafeCheck Audio SOS] 🛑 MediaRecorder.stop() called! Reason: "${reason}", State: "${recorder.state}"`);
+      // Update status to 'uploading' as soon as the stop command begins
+      updateTripAudioStatus(tripId, 'uploading');
       if (recorder.state === 'recording') {
         try {
           recorder.stop();
@@ -340,6 +472,7 @@ export async function startSosEvidenceRecording(
 
       if (chunks.length === 0) {
         console.warn('[SafeCheck Audio SOS] ⚠️ No audio chunks collected before recorder stopped.');
+        await updateTripAudioStatus(tripId, 'failed', null, 'No audio data captured by microphone.');
         return;
       }
 
@@ -347,15 +480,29 @@ export async function startSosEvidenceRecording(
       const finalBlob = new Blob(chunks, { type: mimeType });
       console.log(`[SafeCheck Audio SOS] 🎵 Final recorded ambient audio Blob: Size=${finalBlob.size} bytes (${(finalBlob.size / 1024).toFixed(1)} KB), Duration=${actualDuration}s, MIME="${finalBlob.type}"`);
 
-      // Read as Data URL to update in-memory snapshot immediately
+      // Read as Data URL to store directly into the Firestore trip document
       const reader = new FileReader();
+      reader.onerror = (rErr) => {
+        console.error('[SafeCheck Audio SOS] ❌ FileReader error reading blob:', rErr);
+        updateTripAudioStatus(tripId, 'failed', null, 'Failed to process audio recording.');
+      };
+
       reader.onloadend = async () => {
         const dataUrl = (reader.result as string) || '';
+        if (!dataUrl) {
+          console.warn('[SafeCheck Audio SOS] ⚠️ FileReader produced empty dataUrl');
+          await updateTripAudioStatus(tripId, 'failed', null, 'Empty audio stream generated.');
+          return;
+        }
+
+        const audioId = `audio_${tripId}_${Date.now()}`;
         const evidence: AudioEvidence = {
+          id: audioId,
           tripId,
           alertId: tripId,
           userId,
           audioDataUrl: dataUrl,
+          download_url: dataUrl,
           recordedAt: startTimeIso,
           durationSeconds: actualDuration,
           mimeType,
@@ -365,11 +512,38 @@ export async function startSosEvidenceRecording(
           sessionStorage.setItem('safecheck_latest_audio_snapshot', JSON.stringify(evidence));
         } catch {}
 
-        // Dynamically import uploadAndLogAudioEvidence to avoid circular dependency
+        // CRITICAL: Immediately update Firestore trip document with 'ready' status & base64 audio!
+        // This rides along with the Guardian view's real-time onSnapshot listener on 'trips/${tripId}'.
+        const updateSuccess = await updateTripAudioStatus(tripId, 'ready', evidence);
+        if (!updateSuccess) {
+          console.warn(`[SafeCheck Audio SOS] Trip document "${tripId}" does not exist in Firestore. Skipping evidence write.`);
+          return;
+        }
+
+        // Also write to top-level sos_audio_evidence collection in Firestore
         try {
-          console.log(`[SafeCheck Audio SOS] 🚀 Uploading final genuine audio evidence Blob (${finalBlob.size} bytes, ${actualDuration}s, mime: ${mimeType}) for trip "${tripId}"...`);
+          if (db) {
+            await setDoc(doc(db, 'sos_audio_evidence', audioId), {
+              audio_id: audioId,
+              trip_id: tripId,
+              sos_id: tripId,
+              user_id: userId,
+              download_url: dataUrl,
+              duration_seconds: actualDuration,
+              recorded_at: startTimeIso,
+              file_size_bytes: finalBlob.size,
+              mime_type: mimeType,
+              created_at: new Date().toISOString(),
+            }, { merge: true });
+          }
+        } catch (sosAudioErr) {
+          console.warn('[SafeCheck Audio SOS] sos_audio_evidence write notice:', sosAudioErr);
+        }
+
+        // Background non-blocking archival upload
+        try {
           const { uploadAndLogAudioEvidence } = await import('./sosService');
-          await uploadAndLogAudioEvidence({
+          uploadAndLogAudioEvidence({
             tripId,
             sosId: tripId,
             userId,
@@ -377,11 +551,10 @@ export async function startSosEvidenceRecording(
             recordedAt: startTimeIso,
             durationSeconds: actualDuration,
             mimeType,
+          }).catch((uploadErr) => {
+            console.warn('[SafeCheck Audio SOS] Background upload notice (non-blocking):', uploadErr);
           });
-          console.log(`[SafeCheck Audio SOS] ✅ Successfully completed upload & metadata persistence for trip: "${tripId}"`);
-        } catch (uploadErr) {
-          console.error('[SafeCheck Audio SOS] ❌ Error in background upload of final audio evidence:', uploadErr);
-        }
+        } catch {}
       };
       reader.readAsDataURL(finalBlob);
     };
@@ -390,7 +563,7 @@ export async function startSosEvidenceRecording(
     recorder.start(1000);
     console.log(`[SafeCheck Audio SOS] ▶️ Live ambient recording started at ${startTimeIso} (intended duration: ${durationSeconds}s)`);
 
-    const targetTimeoutMs = (durationSeconds || 120) * 1000;
+    const targetTimeoutMs = (durationSeconds || 30) * 1000;
     activeSosTimerId = setTimeout(() => {
       safeStopRecorder(`Intended duration timer elapsed (${targetTimeoutMs}ms)`);
     }, targetTimeoutMs);
@@ -398,7 +571,9 @@ export async function startSosEvidenceRecording(
     return { success: true };
   } catch (err: any) {
     console.error('[SafeCheck Audio SOS] ❌ Error initializing MediaRecorder:', err);
-    return { success: false, error: err?.message || 'MediaRecorder failed to start' };
+    const errMsg = err?.message || 'MediaRecorder failed to start';
+    updateTripAudioStatus(tripId, 'failed', null, errMsg);
+    return { success: false, error: errMsg };
   }
 }
 

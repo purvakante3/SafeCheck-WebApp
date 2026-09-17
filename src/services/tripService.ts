@@ -320,6 +320,7 @@ export async function appendTripLocationTrail(
 
   // 2. PRIMARY: Update Firestore doc with arrayUnion
   let firestoreSuccess = false;
+  let documentMissing = false;
   if (isDeviceOnline()) {
     try {
       if (!tripId.startsWith('trip_offline_') && !tripId.startsWith('trip_local_')) {
@@ -336,13 +337,22 @@ export async function appendTripLocationTrail(
         });
         firestoreSuccess = true;
       }
-    } catch (firestoreErr) {
+    } catch (firestoreErr: any) {
+      const isNotFound = firestoreErr?.code === 'not-found' || firestoreErr?.message?.includes('No document to update');
+      if (isNotFound) {
+        documentMissing = true;
+        console.warn(`[SafeCheck Trip Trail] 🛑 Document "${tripId}" was deleted from Firestore. Halting trail tracking and clearing active session.`);
+        setCachedActiveTrip(userId, null);
+        const currentCached = getCachedTrips(userId);
+        setCachedTrips(userId, currentCached.filter((t) => t.id !== tripId));
+        return;
+      }
       console.warn('Firestore update for location trail notice:', firestoreErr);
     }
   }
 
-  // If offline or write failed, enqueue for sync on reconnect
-  if (!isDeviceOnline() || !firestoreSuccess) {
+  // If offline or write failed (and document was not deleted), enqueue for sync on reconnect
+  if (!documentMissing && (!isDeviceOnline() || !firestoreSuccess)) {
     enqueueOfflineAction({
       type: 'trail_point',
       userId,

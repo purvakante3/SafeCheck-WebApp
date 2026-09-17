@@ -22,7 +22,7 @@ import { UserProfile, EmergencyContact, Trip, AppSettings, SOSEventType, SOSEven
 import { subscribeAuth, getUserProfile, logoutUser, updateUserProfileData } from './services/authService';
 import { subscribeContacts } from './services/contactService';
 import { subscribeActiveTrip, subscribeUserTrips, migrateLegacySOSTrips } from './services/tripService';
-import { triggerSOSAlert, subscribeUserSOSEvents, restoreSOSEventsToFirestore } from './services/sosService';
+import { triggerSOSAlert, subscribeUserSOSEvents } from './services/sosService';
 import { getAppSettings, saveAppSettings, DEFAULT_SETTINGS } from './services/settingsService';
 import { getCurrentLocation } from './services/locationService';
 import { notifyTripCheckInReminder, notifySosTriggered } from './services/notificationService';
@@ -217,11 +217,6 @@ function AppContent() {
     // Subscription to unified trips collection (contains both regular trips and SOS events)
     const unsubTrips = subscribeUserTrips(user.uid, (trips) => {
       setRecentTrips(trips);
-    });
-
-    // Automatically ensure all SOS events are restored and synchronized to Firestore trips
-    restoreSOSEventsToFirestore(user.uid).catch((err) => {
-      console.warn('[SafeCheck SOS] Auto-restore notice:', err?.message || err);
     });
 
     return () => {
