@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="40" fill="#9E4D71"/>
+  <circle cx="96" cy="96" r="76" fill="#843859" opacity="0.4"/>
+  <!-- Shield outline -->
+  <path d="M96 32 C124 48 148 48 152 74 C152 120 120 152 96 164 C72 152 40 120 40 74 C44 48 68 48 96 32 Z" fill="#FAF6F3"/>
+  <!-- Shield inner emblem -->
+  <path d="M96 46 C118 58 138 58 140 78 C140 114 116 140 96 150 C76 140 52 114 52 78 C54 58 74 58 96 46 Z" fill="#9E4D71"/>
+  <!-- Heart and Check mark -->
+  <path d="M96 72 C91 64 81 64 76 69 C70 75 70 85 76 91 L96 112 L116 91 C122 85 122 75 116 69 C111 64 101 64 96 72 Z" fill="#FAF6F3"/>
+  <circle cx="96" cy="92" r="6" fill="#FAF6F3"/>
+</svg>
